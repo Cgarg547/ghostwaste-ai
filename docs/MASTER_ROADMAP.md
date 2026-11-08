@@ -4,7 +4,7 @@
 |---|---|---|
 | 1 Foundation | PASS | Branch audit, API tests and Next build. Browser automation unavailable. |
 | 2 Data and inventory | PASS | Fresh SQLite migration, atomic idempotent CSV import/export, canonical mass conversion, entities and stock-integrity tests pass. Production sets `GHOSTWASTE_AUTO_SCHEMA=false` after migration. |
-| 3 Forecasting | PARTIAL | Forecast runs/predictions have executable safe migrations; rolling-origin selection/history APIs and empirical residual intervals pass tests. LightGBM is unavailable locally (`libomp.dylib` missing). |
+| 3 Forecasting | PARTIAL | Forecast runs/predictions have safe migrations; rolling-origin selection/history APIs plus separately held-out empirical interval coverage pass tests. LightGBM is unavailable locally (`libomp.dylib` missing). |
 | 4 Waste risk | PARTIAL | Persisted simulated forecast→recipe→FEFO scenarios expose batch risk, cost, shortage and provenance; Monte Carlo uncertainty is not yet connected to stored workflows. |
 | 5 Optimization | PARTIAL | Integrated workflow invokes multi-ingredient planning and creates approval-required persisted recommendations; recipe/prep capacity and persisted optimization scenarios remain. |
 | 6 Web app | PARTIAL | Functional scenario lab and recommendation flow; required product pages remain. |

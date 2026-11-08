@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
-from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase, optimize_multi_ingredient, moving_average, seasonal_naive, lightgbm_forecast, rolling_origin_backtest
+from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase, optimize_multi_ingredient, moving_average, seasonal_naive, lightgbm_forecast, rolling_origin_backtest, independent_interval_coverage
 
 db_path=os.environ.get("GHOSTWASTE_DB_PATH","./data/ghostwaste.db")
 os.makedirs(os.path.dirname(db_path) or ".",exist_ok=True)
@@ -210,6 +210,7 @@ def create_forecast_run(menu_item:str,data:ForecastRunIn,db:Session=Depends(db_s
     values=[x.quantity for x in history]
     if len(values)<=data.initial_train: raise HTTPException(422,"Insufficient chronological sales history")
     evaluation=rolling_origin_backtest(values,data.initial_train); model=evaluation["selected_model"]
+    if len(values)>data.initial_train+3: evaluation["independent_interval_evaluation"]=independent_interval_coverage(values,data.initial_train,3)
     predicted=(moving_average(values,data.horizon) if model=="moving_average" else seasonal_naive(values,data.horizon) if model=="seasonal_naive" else lightgbm_forecast(values,data.horizon))
     width=evaluation["interval_half_width"];start=history[-1].sold_on+timedelta(days=1); forecasts=[{"date":str(start+timedelta(days=i)),"quantity":q,"low":round(max(0,q-width),2),"high":round(q+width,2)} for i,q in enumerate(predicted)]
     run=ForecastRunDB(id=str(uuid4()),menu_item=menu_item,model=model,metrics_json=json.dumps(evaluation["models"]),predictions_json=json.dumps(forecasts));db.add(run);db.flush()

@@ -1,4 +1,4 @@
-from apps.api.engines import Batch, metrics, monte_carlo_risk, optimize_purchase, optimize_multi_ingredient, seasonal_naive, rolling_origin_backtest
+from apps.api.engines import Batch, metrics, monte_carlo_risk, optimize_purchase, optimize_multi_ingredient, seasonal_naive, rolling_origin_backtest, independent_interval_coverage
 
 def test_metrics_and_seasonal_baseline_are_deterministic():
     assert seasonal_naive([1,2,3,4,5,6,7],3)==[1,2,3]
@@ -21,6 +21,11 @@ def test_rolling_origin_never_uses_future_values():
     result=rolling_origin_backtest([1,2,3,4,5,6,7,8],initial_train=4)
     assert result["points"]==4
     assert result["selected_model"] in {"moving_average","seasonal_naive"}
+
+def test_interval_coverage_uses_separate_chronological_holdout():
+    result=independent_interval_coverage([1,2,3,4,5,6,7,8,9,10,11,12],initial_train=5,holdout=3)
+    assert result["holdout_points"]==3
+    assert 0<=result["independent_coverage"]<=1
 
 def test_multi_ingredient_optimizer_respects_lead_time():
     result=optimize_multi_ingredient([{"ingredient":"safe","available_kg":1,"demand_kg":5,"unit_cost":1,"lead_days":1},{"ingredient":"late","available_kg":1,"demand_kg":5,"unit_cost":1,"lead_days":10}],7,20)

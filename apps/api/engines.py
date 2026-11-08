@@ -50,6 +50,15 @@ def rolling_origin_backtest(values:list[float], initial_train:int=7)->dict:
     chosen={"moving_average":moving,"seasonal_naive":seasonal,"lightgbm":lightgbm}[selected];residual=np.abs(np.array(chosen)-np.array(actual));interval=float(np.quantile(residual,.9));coverage=float(np.mean(np.abs(np.array(actual)-np.array(chosen))<=interval))
     return {"points":len(actual),"models":scores,"selected_model":selected,"actual":actual,"interval_half_width":round(interval,4),"interval_coverage":round(coverage,4)}
 
+def independent_interval_coverage(values:list[float], initial_train:int=7, holdout:int=3)->dict:
+    """Learn residual width before a final untouched chronological window."""
+    if len(values)<=initial_train+holdout: raise ValueError("Need history, calibration, and holdout observations")
+    calibration=rolling_origin_backtest(values[:-holdout],initial_train); model=calibration["selected_model"]; train=list(values[:-holdout]);pred=[]
+    for actual in values[-holdout:]:
+        p=(moving_average(train,1)[0] if model=="moving_average" else seasonal_naive(train,1)[0] if model=="seasonal_naive" else lightgbm_forecast(train,1)[0]);pred.append(p);train.append(actual)
+    width=calibration["interval_half_width"];coverage=float(np.mean(np.abs(np.array(values[-holdout:])-np.array(pred))<=width))
+    return {"selected_model":model,"calibration_points":calibration["points"],"holdout_points":holdout,"interval_half_width":width,"independent_coverage":round(coverage,4),"metrics":metrics(values[-holdout:],pred)}
+
 @dataclass
 class Batch: id:str; ingredient:str; quantity_kg:float; use_by_days:int; unit_cost:float
 @dataclass
