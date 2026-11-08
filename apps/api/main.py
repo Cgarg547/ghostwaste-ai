@@ -1,0 +1,98 @@
+"""GhostWaste local demo API — synthetic results are not food-safety advice."""
+from __future__ import annotations
+from datetime import date, datetime, timedelta
+from typing import Literal
+from uuid import uuid4
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+
+engine = create_engine("sqlite:///./ghostwaste.db", connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+class Base(DeclarativeBase): pass
+class IngredientDB(Base):
+    __tablename__="ingredients"; id:Mapped[str]=mapped_column(String,primary_key=True); name:Mapped[str]=mapped_column(String,unique=True,index=True); unit:Mapped[str]=mapped_column(String,default="kg"); storage_category:Mapped[str]=mapped_column(String,default="chilled"); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow); batches:Mapped[list["BatchDB"]]=relationship(back_populates="ingredient")
+class BatchDB(Base):
+    __tablename__="inventory_batches"; id:Mapped[str]=mapped_column(String,primary_key=True); ingredient_id:Mapped[str]=mapped_column(ForeignKey("ingredients.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); unit_cost:Mapped[float]=mapped_column(Float); received_on:Mapped[date]=mapped_column(Date); use_by:Mapped[date]=mapped_column(Date,index=True); ingredient:Mapped[IngredientDB]=relationship(back_populates="batches")
+class DailySaleDB(Base):
+    __tablename__="daily_sales"; id:Mapped[int]=mapped_column(Integer,primary_key=True); menu_item:Mapped[str]=mapped_column(String,index=True); sold_on:Mapped[date]=mapped_column(Date,index=True); quantity:Mapped[float]=mapped_column(Float)
+class RecommendationDB(Base):
+    __tablename__="recommendations"; id:Mapped[str]=mapped_column(String,primary_key=True); title:Mapped[str]=mapped_column(String); status:Mapped[str]=mapped_column(String,default="pending",index=True); estimated_kg:Mapped[float]=mapped_column(Float,default=0); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+class AuditEventDB(Base):
+    __tablename__="audit_events"; id:Mapped[int]=mapped_column(Integer,primary_key=True); event_type:Mapped[str]=mapped_column(String,index=True); detail:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class BatchInput(BaseModel):
+    id:str; ingredient:str=Field(min_length=1,max_length=120); quantity_kg:float=Field(ge=0); use_by:date; unit_cost:float=Field(ge=0); received_on:date|None=None
+class Demand(BaseModel): ingredient:str; expected_daily_kg:float=Field(ge=0)
+class Scenario(BaseModel):
+    batches:list[BatchInput]=Field(max_length=500); demand:list[Demand]=Field(max_length=500); as_of:date; reduction_fraction:float=Field(default=0,ge=0,le=1)
+    @model_validator(mode="after")
+    def validate_unique(self):
+        if len({b.id for b in self.batches}) != len(self.batches): raise ValueError("Batch IDs must be unique")
+        if len({d.ingredient.lower() for d in self.demand}) != len(self.demand): raise ValueError("Demand ingredients must be unique")
+        return self
+class Risk(BaseModel): batch_id:str; ingredient:str; at_risk_kg:float; potential_cost:float; days_until_use_by:int
+class Result(BaseModel): provenance:Literal["synthetic_scenario"]="synthetic_scenario"; risks:list[Risk]; total_at_risk_kg:float; total_potential_cost:float; assumptions:list[str]
+class IngredientIn(BaseModel): name:str=Field(min_length=1,max_length=120); unit:Literal["kg"]="kg"; storage_category:Literal["ambient","chilled","frozen"]="chilled"
+class BatchCreate(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0); unit_cost:float=Field(ge=0); received_on:date; use_by:date
+class SaleIn(BaseModel): menu_item:str=Field(min_length=1); sold_on:date; quantity:float=Field(ge=0)
+class DecisionIn(BaseModel): decision:Literal["accepted","rejected"]; reason:str=Field(default="",max_length=500)
+def db_session():
+    db=SessionLocal()
+    try: yield db
+    finally: db.close()
+def fefo_risk(s:Scenario)->Result:
+    demand={d.ingredient.lower():d.expected_daily_kg for d in s.demand}; risks=[]
+    for name in {b.ingredient.lower() for b in s.batches}:
+        # Allocate cumulative demand to batches ordered by expiry (FEFO).
+        rate=demand.get(name,0); allocated=0.0
+        for b in sorted((x for x in s.batches if x.ingredient.lower()==name),key=lambda x:x.use_by):
+            days=(b.use_by-s.as_of).days; capacity=max(0,days)*rate-allocated; consumed=min(b.quantity_kg,max(0,capacity)) if days>0 else 0
+            allocated+=consumed; risk=round(max(0,b.quantity_kg-consumed)*(1-s.reduction_fraction),3)
+            risks.append(Risk(batch_id=b.id,ingredient=b.ingredient,at_risk_kg=risk,potential_cost=round(risk*b.unit_cost,2),days_until_use_by=days))
+    return Result(risks=risks,total_at_risk_kg=round(sum(x.at_risk_kg for x in risks),3),total_potential_cost=round(sum(x.potential_cost for x in risks),2),assumptions=["Synthetic inputs; no real restaurant outcome or food-safety decision","FEFO allocation across batches with constant daily ingredient demand","Use-by is a hard boundary; expired batches are never allocated","No supplier arrivals or uncertainty in this deterministic local demo"])
+
+app=FastAPI(title="GhostWaste API",version="0.2.0")
+Base.metadata.create_all(engine)
+@app.on_event("startup")
+def setup(): Base.metadata.create_all(engine)
+@app.get("/health")
+def health(): return {"status":"ok","version":"0.2.0","storage":"local SQLite"}
+@app.post("/scenario",response_model=Result)
+def scenario(s:Scenario): return fefo_risk(s)
+@app.get("/ingredients")
+def ingredients(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"unit":x.unit,"storage_category":x.storage_category} for x in db.scalars(select(IngredientDB).order_by(IngredientDB.name))]
+@app.post("/ingredients",status_code=201)
+def create_ingredient(data:IngredientIn,db:Session=Depends(db_session)):
+    if db.scalar(select(IngredientDB).where(IngredientDB.name==data.name.strip())): raise HTTPException(409,"Ingredient already exists")
+    x=IngredientDB(id=str(uuid4()),**data.model_dump()); db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.get("/batches")
+def batches(db:Session=Depends(db_session)): return [{"id":x.id,"ingredient":x.ingredient.name,"quantity_kg":x.quantity_kg,"unit_cost":x.unit_cost,"received_on":x.received_on,"use_by":x.use_by} for x in db.scalars(select(BatchDB).join(BatchDB.ingredient).order_by(BatchDB.use_by))]
+@app.post("/batches",status_code=201)
+def create_batch(data:BatchCreate,db:Session=Depends(db_session)):
+    if data.use_by<data.received_on: raise HTTPException(422,"Use-by date cannot precede received date")
+    if not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Ingredient not found")
+    x=BatchDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.post("/sales",status_code=201)
+def create_sale(data:SaleIn,db:Session=Depends(db_session)):
+    x=DailySaleDB(**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.get("/forecast/{menu_item}")
+def forecast(menu_item:str,horizon:int=7,db:Session=Depends(db_session)):
+    if not 1<=horizon<=30: raise HTTPException(422,"Horizon must be 1–30 days")
+    history=list(db.scalars(select(DailySaleDB).where(DailySaleDB.menu_item==menu_item).order_by(DailySaleDB.sold_on)))
+    if not history: raise HTTPException(404,"No sales history for menu item")
+    values=[x.quantity for x in history]; prediction=round(sum(values[-7:])/min(7,len(values)),2); start=history[-1].sold_on+timedelta(days=1)
+    return {"provenance":"observed_local_demo_sales","model":"moving_average_7_or_less","training_points":len(values),"predictions":[{"date":str(start+timedelta(days=i)),"quantity":prediction,"low":round(max(0,prediction*.7),2),"high":round(prediction*1.3,2)} for i in range(horizon)],"limitations":"Baseline only; chronological backtesting required before operational use."}
+@app.post("/recommendations/from-scenario")
+def recommend(s:Scenario,db:Session=Depends(db_session)):
+    result=fefo_risk(s); items=[]
+    for risk in result.risks:
+        if risk.at_risk_kg>0:
+            x=RecommendationDB(id=str(uuid4()),title=f"Review FEFO use of {risk.ingredient} batch {risk.batch_id}",estimated_kg=risk.at_risk_kg);db.add(x);items.append({"id":x.id,"title":x.title,"estimated_kg":x.estimated_kg,"status":"pending"})
+    db.add(AuditEventDB(event_type="recommendations_generated",detail=f"{len(items)} synthetic scenario recommendations"));db.commit();return {"recommendations":items,"provenance":"synthetic_scenario","warning":"Manager approval required; no external action is executed."}
+@app.post("/recommendations/{recommendation_id}/decision")
+def decide(recommendation_id:str,data:DecisionIn,db:Session=Depends(db_session)):
+    x=db.get(RecommendationDB,recommendation_id)
+    if not x: raise HTTPException(404,"Recommendation not found")
+    x.status=data.decision;db.add(AuditEventDB(event_type="recommendation_"+data.decision,detail=f"{recommendation_id}: {data.reason}"));db.commit();return {"id":x.id,"status":x.status,"reason":data.reason}
