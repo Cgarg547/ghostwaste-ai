@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import date, datetime, timedelta
 import csv
+import os
 from io import StringIO
 from typing import Literal
 from uuid import uuid4
@@ -11,7 +12,9 @@ from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, creat
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase
 
-engine = create_engine("sqlite:///./ghostwaste.db", connect_args={"check_same_thread": False})
+db_path=os.environ.get("GHOSTWASTE_DB_PATH","./data/ghostwaste.db")
+os.makedirs(os.path.dirname(db_path) or ".",exist_ok=True)
+engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 class Base(DeclarativeBase): pass
 class IngredientDB(Base):

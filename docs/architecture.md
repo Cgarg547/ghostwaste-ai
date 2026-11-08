@@ -9,3 +9,5 @@ The risk engine is deterministic and batch-aware: it orders batches FEFO, treats
 Production needs PostgreSQL, Alembic migrations, authentication, CORS allowlisting, a durable worker, and an independently validated forecast/optimization service. This local demo must not be exposed as an unauthenticated writable API.
 
 Local container packaging is supplied in `Dockerfile.api`, `Dockerfile.web`, and `docker-compose.yml`. It is only a local demonstration configuration: SQLite remains inside the API container until a production database URL and migrations are implemented.
+
+Compose injects `BACKEND_ORIGIN=http://api:8000` at the web image build step; native Next development defaults to `http://127.0.0.1:8000`. SQLite uses `GHOSTWASTE_DB_PATH`, which is `/app/data/ghostwaste.db` in Compose and therefore persists in the named `ghostwaste_data` volume.

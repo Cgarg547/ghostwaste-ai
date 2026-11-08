@@ -3,9 +3,17 @@ services:
     build: {context: ., dockerfile: Dockerfile.api}
     ports: ["8000:8000"]
     volumes: ["ghostwaste_data:/app/data"]
+    environment:
+      GHOSTWASTE_DB_PATH: /app/data/ghostwaste.db
   web:
-    build: {context: ., dockerfile: Dockerfile.web}
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        BACKEND_ORIGIN: http://api:8000
     ports: ["3000:3000"]
     depends_on: [api]
+    environment:
+      BACKEND_ORIGIN: http://api:8000
 volumes:
   ghostwaste_data:
