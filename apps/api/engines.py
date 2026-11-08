@@ -66,3 +66,20 @@ def optimize_purchase(available_kg:float, demand_kg:float, unit_cost:float, min_
     solver.Minimize(unit_cost*order+shortage_penalty*shortage+waste_penalty*surplus)
     status=solver.Solve(); names={solver.OPTIMAL:"optimal",solver.FEASIBLE:"feasible"}
     return {"status":names.get(status,"infeasible"),"recommended_order_kg":round(order.solution_value(),3) if status in names else None,"expected_shortage_kg":round(shortage.solution_value(),3) if status in names else None,"expected_surplus_kg":round(surplus.solution_value(),3) if status in names else None,"objective":round(solver.Objective().Value(),3) if status in names else None,"assumptions":["Single-ingredient linear purchase planning", "Recommendation only; manager approval required", "No order executes through this API"]}
+
+def optimize_multi_ingredient(items:list[dict], horizon_days:int, storage_capacity_kg:float)->dict:
+    """Joint LP plan; orders arriving after horizon cannot satisfy current demand."""
+    if horizon_days<1 or storage_capacity_kg<0: raise ValueError("Invalid planning horizon or capacity")
+    solver=pywraplp.Solver.CreateSolver("GLOP")
+    if not solver: raise RuntimeError("OR-Tools GLOP solver unavailable")
+    orders=[]; shortages=[]; surpluses=[]
+    for i,x in enumerate(items):
+        if min(x["available_kg"],x["demand_kg"],x["unit_cost"],x.get("max_order_kg",1000),x.get("lead_days",0))<0: raise ValueError("Negative item value")
+        arrives=x.get("lead_days",0)<=horizon_days; order=solver.NumVar(0,x.get("max_order_kg",1000) if arrives else 0,f"order_{i}"); shortage=solver.NumVar(0,solver.infinity(),f"shortage_{i}"); surplus=solver.NumVar(0,solver.infinity(),f"surplus_{i}")
+        solver.Add(x["available_kg"]+order+shortage-surplus==x["demand_kg"]);orders.append(order);shortages.append(shortage);surpluses.append(surplus)
+    solver.Add(solver.Sum(surpluses)<=storage_capacity_kg)
+    solver.Minimize(solver.Sum([x["unit_cost"]*orders[i]+x.get("shortage_penalty",20)*shortages[i]+x.get("waste_penalty",2)*surpluses[i] for i,x in enumerate(items)]))
+    status=solver.Solve(); names={solver.OPTIMAL:"optimal",solver.FEASIBLE:"feasible"}
+    if status not in names:return {"status":"infeasible","items":[]}
+    rows=[{"ingredient":x["ingredient"],"order_kg":round(orders[i].solution_value(),3),"shortage_kg":round(shortages[i].solution_value(),3),"surplus_kg":round(surpluses[i].solution_value(),3),"lead_time_blocks_order":x.get("lead_days",0)>horizon_days} for i,x in enumerate(items)]
+    return {"status":names[status],"items":rows,"objective":round(solver.Objective().Value(),3),"baseline_shortage_kg":round(sum(max(0,x["demand_kg"]-x["available_kg"]) for x in items),3),"optimized_shortage_kg":round(sum(x["shortage_kg"] for x in rows),3),"warning":"Planning recommendation only; no order is executed without manager approval."}

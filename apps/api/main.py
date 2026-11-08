@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
-from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase, moving_average, seasonal_naive, rolling_origin_backtest
+from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase, optimize_multi_ingredient, moving_average, seasonal_naive, rolling_origin_backtest
 
 db_path=os.environ.get("GHOSTWASTE_DB_PATH","./data/ghostwaste.db")
 os.makedirs(os.path.dirname(db_path) or ".",exist_ok=True)
@@ -68,6 +68,8 @@ class RiskSimulationIn(BaseModel):
     batches:list[BatchInput]; demand:list[Demand]; as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42
 class PurchaseOptimizeIn(BaseModel):
     available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); min_order_kg:float=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,gt=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
+class MultiPlanItem(BaseModel): ingredient:str; available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); lead_days:int=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,ge=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
+class MultiOptimizeIn(BaseModel): items:list[MultiPlanItem]=Field(min_length=1,max_length=100); horizon_days:int=Field(default=7,ge=1,le=90); storage_capacity_kg:float=Field(ge=0)
 class ForecastRunIn(BaseModel): horizon:int=Field(default=7,ge=1,le=30); initial_train:int=Field(default=7,ge=3,le=365)
 def db_session():
     db=SessionLocal()
@@ -101,6 +103,10 @@ def simulate_risk(data:RiskSimulationIn):
 @app.post("/optimization/purchase")
 def optimize(data:PurchaseOptimizeIn):
     try: return {"provenance":"synthetic_scenario","result":optimize_purchase(**data.model_dump())}
+    except ValueError as e: raise HTTPException(422,str(e))
+@app.post("/optimization/multi-ingredient")
+def optimize_multi(data:MultiOptimizeIn):
+    try:return {"provenance":"synthetic_scenario","result":optimize_multi_ingredient([x.model_dump() for x in data.items],data.horizon_days,data.storage_capacity_kg)}
     except ValueError as e: raise HTTPException(422,str(e))
 @app.get("/ingredients")
 def ingredients(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"unit":x.unit,"storage_category":x.storage_category} for x in db.scalars(select(IngredientDB).order_by(IngredientDB.name))]
