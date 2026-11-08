@@ -10,6 +10,6 @@
 | 6 Web app | PARTIAL | Functional scenario lab and recommendation flow; required product pages remain. |
 | 7 Evaluation | PARTIAL | Reproducible synthetic fixture experiment script; no real dataset/pilot. |
 | 8 Security/QA | PARTIAL | Input validation and API tests; no auth, browser tests, lint/a11y suite. |
-| 9 Deployment | BLOCKED | Docker/deployment not implemented; external hosting authorization not granted. |
+| 9 Deployment | PARTIAL | Local Dockerfiles and Compose supplied; image build was started but did not finish within the command window. External hosting authorization not granted. |
 | 10 Presentation | PARTIAL | Submission draft and script; no video/screenshots. |
 | 11 Submission | BLOCKED | Eligibility, registration, publishing, and final submit require user access/approval. |
