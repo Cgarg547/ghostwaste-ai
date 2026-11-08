@@ -20,6 +20,17 @@ def metrics(actual: list[float], predicted: list[float]) -> dict[str, float | No
     errors=np.array(predicted)-np.array(actual); actual_a=np.array(actual)
     return {"mae":round(float(np.mean(np.abs(errors))),4),"rmse":round(float(np.sqrt(np.mean(errors**2))),4),"bias":round(float(np.mean(errors)),4),"wape":round(float(np.sum(np.abs(errors))/np.sum(np.abs(actual_a))*100),4) if np.sum(np.abs(actual_a)) else None}
 
+def rolling_origin_backtest(values:list[float], initial_train:int=7)->dict:
+    """Leakage-free one-step rolling-origin comparison of deterministic baselines."""
+    if len(values)<=initial_train: raise ValueError("Need more observations than initial training window")
+    actual=[]; moving=[]; seasonal=[]
+    for cutoff in range(initial_train,len(values)):
+        train=values[:cutoff];actual.append(values[cutoff])
+        moving.append(moving_average(train,1)[0]);seasonal.append(seasonal_naive(train,1)[0])
+    scores={"moving_average":metrics(actual,moving),"seasonal_naive":metrics(actual,seasonal)}
+    selected=min(scores,key=lambda model:scores[model]["mae"] if scores[model]["mae"] is not None else float("inf"))
+    return {"points":len(actual),"models":scores,"selected_model":selected,"actual":actual}
+
 @dataclass
 class Batch: id:str; ingredient:str; quantity_kg:float; use_by_days:int; unit_cost:float
 @dataclass

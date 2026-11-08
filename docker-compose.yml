@@ -5,6 +5,7 @@ services:
     volumes: ["ghostwaste_data:/app/data"]
     environment:
       GHOSTWASTE_DB_PATH: /app/data/ghostwaste.db
+      GHOSTWASTE_AUTO_SCHEMA: "true"
   web:
     build:
       context: .

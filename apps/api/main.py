@@ -79,9 +79,11 @@ def fefo_risk(s:Scenario)->Result:
     return Result(risks=risks,total_at_risk_kg=round(sum(x.at_risk_kg for x in risks),3),total_potential_cost=round(sum(x.potential_cost for x in risks),2),assumptions=["Synthetic inputs; no real restaurant outcome or food-safety decision","FEFO allocation across batches with constant daily ingredient demand","Use-by is a hard boundary; expired batches are never allocated","No supplier arrivals or uncertainty in this deterministic local demo"])
 
 app=FastAPI(title="GhostWaste API",version="0.2.0")
-Base.metadata.create_all(engine)
+auto_schema=os.environ.get("GHOSTWASTE_AUTO_SCHEMA","true").lower()=="true"
+if auto_schema: Base.metadata.create_all(engine)
 @app.on_event("startup")
-def setup(): Base.metadata.create_all(engine)
+def setup():
+    if auto_schema: Base.metadata.create_all(engine)
 @app.get("/health")
 def health(): return {"status":"ok","version":"0.2.0","storage":"local SQLite"}
 @app.post("/scenario",response_model=Result)

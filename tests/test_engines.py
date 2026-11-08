@@ -1,4 +1,4 @@
-from apps.api.engines import Batch, metrics, monte_carlo_risk, optimize_purchase, seasonal_naive
+from apps.api.engines import Batch, metrics, monte_carlo_risk, optimize_purchase, seasonal_naive, rolling_origin_backtest
 
 def test_metrics_and_seasonal_baseline_are_deterministic():
     assert seasonal_naive([1,2,3,4,5,6,7],3)==[1,2,3]
@@ -16,3 +16,8 @@ def test_purchase_optimizer_prioritizes_service_without_automatic_action():
     assert output["status"]=="optimal"
     assert output["recommended_order_kg"]==8
     assert output["expected_shortage_kg"]==0
+
+def test_rolling_origin_never_uses_future_values():
+    result=rolling_origin_backtest([1,2,3,4,5,6,7,8],initial_train=4)
+    assert result["points"]==4
+    assert result["selected_model"] in {"moving_average","seasonal_naive"}
