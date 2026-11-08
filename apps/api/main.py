@@ -40,6 +40,8 @@ class WasteEventDB(Base):
     __tablename__="waste_events"; id:Mapped[str]=mapped_column(String,primary_key=True); batch_id:Mapped[str]=mapped_column(ForeignKey("inventory_batches.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); occurred_on:Mapped[date]=mapped_column(Date); reason:Mapped[str]=mapped_column(String)
 class ForecastRunDB(Base):
     __tablename__="forecast_runs"; id:Mapped[str]=mapped_column(String,primary_key=True); menu_item:Mapped[str]=mapped_column(String,index=True); model:Mapped[str]=mapped_column(String); metrics_json:Mapped[str]=mapped_column(String); predictions_json:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+class ForecastPredictionDB(Base):
+    __tablename__="forecast_predictions"; id:Mapped[int]=mapped_column(Integer,primary_key=True); forecast_run_id:Mapped[str]=mapped_column(ForeignKey("forecast_runs.id"),index=True); predicted_for:Mapped[date]=mapped_column(Date,index=True); quantity:Mapped[float]=mapped_column(Float); low:Mapped[float]=mapped_column(Float); high:Mapped[float]=mapped_column(Float)
 
 class BatchInput(BaseModel):
     id:str; ingredient:str=Field(min_length=1,max_length=120); quantity_kg:float=Field(ge=0); use_by:date; unit_cost:float=Field(ge=0); received_on:date|None=None
@@ -201,7 +203,9 @@ def create_forecast_run(menu_item:str,data:ForecastRunIn,db:Session=Depends(db_s
     evaluation=rolling_origin_backtest(values,data.initial_train); model=evaluation["selected_model"]
     predicted=(moving_average(values,data.horizon) if model=="moving_average" else seasonal_naive(values,data.horizon))
     start=history[-1].sold_on+timedelta(days=1); forecasts=[{"date":str(start+timedelta(days=i)),"quantity":q,"low":round(max(0,q*.7),2),"high":round(q*1.3,2)} for i,q in enumerate(predicted)]
-    run=ForecastRunDB(id=str(uuid4()),menu_item=menu_item,model=model,metrics_json=json.dumps(evaluation["models"]),predictions_json=json.dumps(forecasts));db.add(run);db.commit()
+    run=ForecastRunDB(id=str(uuid4()),menu_item=menu_item,model=model,metrics_json=json.dumps(evaluation["models"]),predictions_json=json.dumps(forecasts));db.add(run);db.flush()
+    for item in forecasts: db.add(ForecastPredictionDB(forecast_run_id=run.id,predicted_for=date.fromisoformat(item["date"]),quantity=item["quantity"],low=item["low"],high=item["high"]))
+    db.commit()
     return {"id":run.id,"menu_item":menu_item,"model":model,"training_points":len(values),"evaluation":evaluation,"predictions":forecasts,"provenance":"local_demo_sales","limitations":"Baseline models only; results are not restaurant pilot metrics."}
 @app.get("/forecasts/{menu_item}/history")
 def forecast_history(menu_item:str,db:Session=Depends(db_session)):
