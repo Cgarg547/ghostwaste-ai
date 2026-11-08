@@ -116,6 +116,64 @@ def setup():
     if auto_schema: Base.metadata.create_all(engine)
 @app.get("/health")
 def health(): return {"status":"ok","version":"0.3.0","storage":"local SQLite","access_mode":"token-protected" if api_token else "local-demo (set GHOSTWASTE_API_TOKEN to protect writes)"}
+
+@app.get("/dashboard")
+def dashboard(db:Session=Depends(db_session)):
+    """Small, read-only rollup for the operational overview."""
+    today=date.today(); all_batches=list(db.scalars(select(BatchDB).join(BatchDB.ingredient).order_by(BatchDB.use_by)))
+    alerts=[{"id":b.id,"ingredient":b.ingredient.name,"quantity_kg":b.quantity_kg,"use_by":str(b.use_by),"days":(b.use_by-today).days,"cost":round(b.quantity_kg*b.unit_cost,2)} for b in all_batches if b.quantity_kg>0 and b.use_by<=today+timedelta(days=3)]
+    return {"ingredients":db.query(IngredientDB).count(),"batches":len(all_batches),"pending_approvals":db.query(RecommendationDB).filter(RecommendationDB.status=="pending").count(),"inventory_kg":round(sum(b.quantity_kg for b in all_batches),2),"expiry_alerts":alerts,"latest_forecasts":[{"id":x.id,"menu_item":x.menu_item,"model":x.model,"created_at":x.created_at} for x in db.scalars(select(ForecastRunDB).order_by(ForecastRunDB.created_at.desc()).limit(6))]}
+
+@app.post("/demo/load")
+def load_demo_data(db:Session=Depends(db_session)):
+    """Add a fixed demo dataset without deleting, updating, or duplicating user records.
+
+    The names are deliberately namespaced and every insert is guarded by its natural
+    key. Repeated calls therefore return the same usable demo, while arbitrary
+    SQLite records and Docker volumes remain untouched.
+    """
+    created={"ingredients":0,"batches":0,"sales":0,"suppliers":0,"links":0,"recipes":0,"recipe_links":0,"forecast_runs":0}
+    ingredient_specs=[("Demo Romaine Hearts","chilled"),("Demo Cherry Tomatoes","chilled"),("Demo Feta","chilled"),("Demo Citrus Dressing","chilled")]
+    ingredients={}
+    for name, category in ingredient_specs:
+        row=db.scalar(select(IngredientDB).where(IngredientDB.name==name))
+        if not row:
+            row=IngredientDB(id=str(uuid4()),name=name,unit="kg",storage_category=category);db.add(row);db.flush();created["ingredients"]+=1
+        ingredients[name]=row
+    supplier=db.scalar(select(SupplierDB).where(SupplierDB.name=="Demo Market Cooperative"))
+    if not supplier:
+        supplier=SupplierDB(id=str(uuid4()),name="Demo Market Cooperative",lead_days=2,minimum_order_kg=2);db.add(supplier);db.flush();created["suppliers"]+=1
+    prices={"Demo Romaine Hearts":5.2,"Demo Cherry Tomatoes":4.8,"Demo Feta":12.5,"Demo Citrus Dressing":8.0}
+    for name, ingredient in ingredients.items():
+        if not db.scalar(select(SupplierIngredientDB).where(SupplierIngredientDB.supplier_id==supplier.id,SupplierIngredientDB.ingredient_id==ingredient.id)):
+            db.add(SupplierIngredientDB(supplier_id=supplier.id,ingredient_id=ingredient.id,purchase_unit_cost=prices[name]));created["links"]+=1
+    batches=[("Demo Romaine Hearts",7.5,5.2,"2026-11-06","2026-11-10"),("Demo Cherry Tomatoes",6.0,4.8,"2026-11-05","2026-11-11"),("Demo Feta",3.0,12.5,"2026-11-03","2026-11-15"),("Demo Citrus Dressing",2.5,8.0,"2026-11-01","2026-11-18")]
+    for name, qty, cost, received, use_by in batches:
+        ing=ingredients[name]; received_d=date.fromisoformat(received); use_by_d=date.fromisoformat(use_by)
+        existing=db.scalar(select(BatchDB).where(BatchDB.ingredient_id==ing.id,BatchDB.quantity_kg==qty,BatchDB.unit_cost==cost,BatchDB.received_on==received_d,BatchDB.use_by==use_by_d))
+        if not existing: db.add(BatchDB(id=str(uuid4()),ingredient_id=ing.id,quantity_kg=qty,unit_cost=cost,received_on=received_d,use_by=use_by_d));created["batches"]+=1
+    menu="Demo Garden Salad"
+    recipe=db.scalar(select(RecipeDB).where(RecipeDB.name==menu))
+    if not recipe:
+        recipe=RecipeDB(id=str(uuid4()),name=menu,yield_servings=1);db.add(recipe);db.flush();created["recipes"]+=1
+    recipe_quantities={"Demo Romaine Hearts":.18,"Demo Cherry Tomatoes":.12,"Demo Feta":.05,"Demo Citrus Dressing":.04}
+    for name, qty in recipe_quantities.items():
+        if not db.scalar(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe.id,RecipeIngredientDB.ingredient_id==ingredients[name].id)):
+            db.add(RecipeIngredientDB(recipe_id=recipe.id,ingredient_id=ingredients[name].id,quantity_kg=qty));created["recipe_links"]+=1
+    sales=[28,31,29,34,38,42,36,32,35,39,44,47,41,37]
+    start=date(2026,10,25)
+    for offset, qty in enumerate(sales):
+        sold=start+timedelta(days=offset)
+        if not db.scalar(select(DailySaleDB).where(DailySaleDB.menu_item==menu,DailySaleDB.sold_on==sold)):
+            db.add(DailySaleDB(menu_item=menu,sold_on=sold,quantity=qty));created["sales"]+=1
+    db.commit()
+    run=db.scalar(select(ForecastRunDB).where(ForecastRunDB.menu_item==menu).order_by(ForecastRunDB.created_at.desc()))
+    if not run:
+        # Uses the same persisted forecast algorithm as the normal UI flow.
+        run_body=create_forecast_run(menu,ForecastRunIn(horizon=7,initial_train=7),db)
+        run_id=run_body["id"];created["forecast_runs"]+=1
+    else: run_id=run.id
+    return {"message":"Demo data is ready. Existing SQLite records were not changed.","created":created,"forecast_run_id":run_id,"menu_item":menu,"provenance":"deterministic_synthetic_demo"}
 @app.post("/scenario",response_model=Result)
 def scenario(s:Scenario): return fefo_risk(s)
 @app.post("/risk/simulate")
