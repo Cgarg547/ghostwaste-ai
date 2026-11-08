@@ -65,7 +65,11 @@ def test_supplier_recipe_and_stock_events_preserve_integrity():
 def test_csv_import_is_atomic_and_export_is_formula_safe():
     bad="ingredient,quantity_kg,unit_cost,received_on,use_by,storage_category\n=unsafe,1,2,2026-11-01,2026-11-02,chilled"
     assert client.post('/inventory/import',json={'csv_text':bad}).status_code==422
-    good="ingredient,quantity_kg,unit_cost,received_on,use_by,storage_category\ncsv herb,1.5,2,2026-11-01,2026-11-02,chilled"
+    herb=f"csv herb {uuid4()}"
+    good=f"ingredient,quantity_kg,unit_cost,received_on,use_by,storage_category\n{herb},1.5,2,2026-11-01,2026-11-02,chilled"
     assert client.post('/inventory/import',json={'csv_text':good}).json()['imported_batches']==1
+    assert client.post('/inventory/import',json={'csv_text':good}).json()['skipped_duplicates']==1
+    grams="ingredient,quantity_kg,unit_cost,received_on,use_by,storage_category,unit\nmetric herb,500,2,2026-11-01,2026-11-02,chilled,g"
+    assert client.post('/inventory/import',json={'csv_text':grams}).json()['imported_batches']==1
     exported=client.get('/inventory/export.csv')
     assert exported.status_code==200 and 'csv herb' in exported.text

@@ -110,6 +110,10 @@ def create_batch(data:BatchCreate,db:Session=Depends(db_session)):
 def safe_csv(value:object)->str:
     value=str(value)
     return "'"+value if value[:1] in ("=","+","-","@") else value
+UNIT_TO_KG={"kg":1.0,"g":0.001,"lb":0.45359237,"oz":0.028349523125}
+def to_kg(quantity:float,unit:str)->float:
+    if unit.lower() not in UNIT_TO_KG: raise ValueError(f"unsupported unit {unit}")
+    return round(quantity*UNIT_TO_KG[unit.lower()],6)
 @app.get("/inventory/export.csv")
 def export_inventory(db:Session=Depends(db_session)):
     stream=StringIO(); writer=csv.writer(stream);writer.writerow(["batch_id","ingredient","quantity_kg","unit_cost","received_on","use_by"])
@@ -128,20 +132,23 @@ def import_inventory(data:InventoryCsvIn,db:Session=Depends(db_session)):
         for i,row in enumerate(rows,2):
             name=row["ingredient"].strip()
             if not name or name[0] in "=+-@": raise ValueError(f"row {i}: unsafe or missing ingredient")
-            quantity=float(row["quantity_kg"]); cost=float(row["unit_cost"]); received=date.fromisoformat(row["received_on"]); use_by=date.fromisoformat(row["use_by"]); category=row["storage_category"].strip()
+            quantity=to_kg(float(row["quantity_kg"]),row.get("unit","kg")); cost=float(row["unit_cost"]); received=date.fromisoformat(row["received_on"]); use_by=date.fromisoformat(row["use_by"]); category=row["storage_category"].strip()
             if quantity<=0 or cost<0 or use_by<received or category not in {"ambient","chilled","frozen"}: raise ValueError(f"row {i}: invalid values")
             staged.append((name,quantity,cost,received,use_by,category))
     except (ValueError,KeyError) as e: raise HTTPException(422,f"CSV validation failed: {e}")
     try:
+        imported=skipped=0
         for name,quantity,cost,received,use_by,category in staged:
             ingredient=db.scalar(select(IngredientDB).where(IngredientDB.name==name))
             if not ingredient:
                 ingredient=IngredientDB(id=str(uuid4()),name=name,unit="kg",storage_category=category);db.add(ingredient);db.flush()
-            db.add(BatchDB(id=str(uuid4()),ingredient_id=ingredient.id,quantity_kg=quantity,unit_cost=cost,received_on=received,use_by=use_by))
-        db.add(AuditEventDB(event_type="inventory_import",detail=f"{len(staged)} CSV rows"));db.commit()
+            duplicate=db.scalar(select(BatchDB).where(BatchDB.ingredient_id==ingredient.id,BatchDB.quantity_kg==quantity,BatchDB.unit_cost==cost,BatchDB.received_on==received,BatchDB.use_by==use_by))
+            if duplicate: skipped+=1;continue
+            db.add(BatchDB(id=str(uuid4()),ingredient_id=ingredient.id,quantity_kg=quantity,unit_cost=cost,received_on=received,use_by=use_by));imported+=1
+        db.add(AuditEventDB(event_type="inventory_import",detail=f"{imported} imported; {skipped} duplicates skipped"));db.commit()
     except Exception:
         db.rollback();raise HTTPException(409,"Import rolled back; no inventory was changed")
-    return {"imported_batches":len(staged),"provenance":"csv_user_input"}
+    return {"imported_batches":imported,"skipped_duplicates":skipped,"provenance":"csv_user_input"}
 @app.get("/suppliers")
 def suppliers(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"lead_days":x.lead_days,"minimum_order_kg":x.minimum_order_kg} for x in db.scalars(select(SupplierDB).order_by(SupplierDB.name))]
 @app.post("/suppliers",status_code=201)
