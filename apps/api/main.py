@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import csv
 import os
+import json
 from io import StringIO
 from typing import Literal
 from uuid import uuid4
@@ -10,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
-from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase
+from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase, moving_average, seasonal_naive, rolling_origin_backtest
 
 db_path=os.environ.get("GHOSTWASTE_DB_PATH","./data/ghostwaste.db")
 os.makedirs(os.path.dirname(db_path) or ".",exist_ok=True)
@@ -37,6 +38,8 @@ class ConsumptionEventDB(Base):
     __tablename__="consumption_events"; id:Mapped[str]=mapped_column(String,primary_key=True); batch_id:Mapped[str]=mapped_column(ForeignKey("inventory_batches.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); occurred_on:Mapped[date]=mapped_column(Date); note:Mapped[str]=mapped_column(String,default="")
 class WasteEventDB(Base):
     __tablename__="waste_events"; id:Mapped[str]=mapped_column(String,primary_key=True); batch_id:Mapped[str]=mapped_column(ForeignKey("inventory_batches.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); occurred_on:Mapped[date]=mapped_column(Date); reason:Mapped[str]=mapped_column(String)
+class ForecastRunDB(Base):
+    __tablename__="forecast_runs"; id:Mapped[str]=mapped_column(String,primary_key=True); menu_item:Mapped[str]=mapped_column(String,index=True); model:Mapped[str]=mapped_column(String); metrics_json:Mapped[str]=mapped_column(String); predictions_json:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 
 class BatchInput(BaseModel):
     id:str; ingredient:str=Field(min_length=1,max_length=120); quantity_kg:float=Field(ge=0); use_by:date; unit_cost:float=Field(ge=0); received_on:date|None=None
@@ -63,6 +66,7 @@ class RiskSimulationIn(BaseModel):
     batches:list[BatchInput]; demand:list[Demand]; as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42
 class PurchaseOptimizeIn(BaseModel):
     available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); min_order_kg:float=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,gt=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
+class ForecastRunIn(BaseModel): horizon:int=Field(default=7,ge=1,le=30); initial_train:int=Field(default=7,ge=3,le=365)
 def db_session():
     db=SessionLocal()
     try: yield db
@@ -189,6 +193,19 @@ def forecast(menu_item:str,horizon:int=7,db:Session=Depends(db_session)):
     if not history: raise HTTPException(404,"No sales history for menu item")
     values=[x.quantity for x in history]; prediction=round(sum(values[-7:])/min(7,len(values)),2); start=history[-1].sold_on+timedelta(days=1)
     return {"provenance":"observed_local_demo_sales","model":"moving_average_7_or_less","training_points":len(values),"predictions":[{"date":str(start+timedelta(days=i)),"quantity":prediction,"low":round(max(0,prediction*.7),2),"high":round(prediction*1.3,2)} for i in range(horizon)],"limitations":"Baseline only; chronological backtesting required before operational use."}
+@app.post("/forecasts/{menu_item}",status_code=201)
+def create_forecast_run(menu_item:str,data:ForecastRunIn,db:Session=Depends(db_session)):
+    history=list(db.scalars(select(DailySaleDB).where(DailySaleDB.menu_item==menu_item).order_by(DailySaleDB.sold_on)))
+    values=[x.quantity for x in history]
+    if len(values)<=data.initial_train: raise HTTPException(422,"Insufficient chronological sales history")
+    evaluation=rolling_origin_backtest(values,data.initial_train); model=evaluation["selected_model"]
+    predicted=(moving_average(values,data.horizon) if model=="moving_average" else seasonal_naive(values,data.horizon))
+    start=history[-1].sold_on+timedelta(days=1); forecasts=[{"date":str(start+timedelta(days=i)),"quantity":q,"low":round(max(0,q*.7),2),"high":round(q*1.3,2)} for i,q in enumerate(predicted)]
+    run=ForecastRunDB(id=str(uuid4()),menu_item=menu_item,model=model,metrics_json=json.dumps(evaluation["models"]),predictions_json=json.dumps(forecasts));db.add(run);db.commit()
+    return {"id":run.id,"menu_item":menu_item,"model":model,"training_points":len(values),"evaluation":evaluation,"predictions":forecasts,"provenance":"local_demo_sales","limitations":"Baseline models only; results are not restaurant pilot metrics."}
+@app.get("/forecasts/{menu_item}/history")
+def forecast_history(menu_item:str,db:Session=Depends(db_session)):
+    return [{"id":x.id,"model":x.model,"metrics":json.loads(x.metrics_json),"predictions":json.loads(x.predictions_json),"created_at":x.created_at} for x in db.scalars(select(ForecastRunDB).where(ForecastRunDB.menu_item==menu_item).order_by(ForecastRunDB.created_at.desc()))]
 @app.post("/recommendations/from-scenario")
 def recommend(s:Scenario,db:Session=Depends(db_session)):
     result=fefo_risk(s); items=[]

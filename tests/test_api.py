@@ -50,6 +50,16 @@ def test_inventory_and_forecast_workflow(tmp_path, monkeypatch):
     assert forecast['model'] == 'moving_average_7_or_less'
     assert forecast['predictions'][0]['quantity'] == 11
 
+def test_persisted_forecast_run_uses_rolling_origin_selection():
+    menu_item=f'forecast-{uuid4()}'
+    for day in range(1,11):
+        assert client.post('/sales',json={'menu_item':menu_item,'sold_on':f'2026-10-{day:02d}','quantity':float(day)}).status_code==201
+    run=client.post(f'/forecasts/{menu_item}',json={'horizon':3,'initial_train':5})
+    assert run.status_code==201
+    body=run.json();assert body['model'] in {'moving_average','seasonal_naive'}
+    assert body['evaluation']['points']==5
+    assert len(client.get(f'/forecasts/{menu_item}/history').json())==1
+
 def test_supplier_recipe_and_stock_events_preserve_integrity():
     suffix=str(uuid4())
     ingredient=client.post('/ingredients',json={'name':f'carrot-{suffix}','storage_category':'chilled'}).json()
