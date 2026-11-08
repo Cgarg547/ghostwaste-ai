@@ -4,7 +4,7 @@
 |---|---|---|
 | 1 Foundation | PASS | Branch audit, API tests and Next build. Browser automation unavailable. |
 | 2 Data and inventory | PASS | Fresh SQLite migration, atomic idempotent CSV import/export, canonical mass conversion, entities and stock-integrity tests pass. Production sets `GHOSTWASTE_AUTO_SCHEMA=false` after migration. |
-| 3 Forecasting | PARTIAL | Forecast runs and individual prediction records have executable safe migrations; rolling-origin selection/history APIs and synthetic evidence pass tests. LightGBM and interval calibration remain. |
+| 3 Forecasting | PARTIAL | Forecast runs/predictions have executable safe migrations; rolling-origin selection/history APIs and empirical residual intervals pass tests. LightGBM is unavailable locally (`libomp.dylib` missing). |
 | 4 Waste risk | PARTIAL | Multi-batch FEFO plus seeded Monte Carlo API/tests and recipe-driven forecast ingredient-demand endpoint; persisted risk scenarios remain. |
 | 5 Optimization | PARTIAL | OR-Tools multi-ingredient purchase plan compares baseline/optimized shortage, enforces storage capacity and blocks late arrivals; persistence and recipe/prep constraints remain. |
 | 6 Web app | PARTIAL | Functional scenario lab and recommendation flow; required product pages remain. |

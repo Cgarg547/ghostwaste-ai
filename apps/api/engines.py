@@ -6,6 +6,10 @@ from statistics import mean
 from typing import Iterable
 import numpy as np
 from ortools.linear_solver import pywraplp
+try:
+    from lightgbm import LGBMRegressor
+except Exception: # optional wheel can lack libomp on macOS
+    LGBMRegressor=None
 
 def moving_average(values: list[float], horizon: int, window: int = 7) -> list[float]:
     if not values or horizon < 1: raise ValueError("History and a positive horizon are required")
@@ -15,6 +19,14 @@ def seasonal_naive(values: list[float], horizon: int, season: int = 7) -> list[f
     if len(values) < season: return moving_average(values, horizon)
     return [round(values[-season + i % season], 3) for i in range(horizon)]
 
+def lightgbm_forecast(values:list[float],horizon:int)->list[float]:
+    if not LGBMRegressor or len(values)<7: return moving_average(values,horizon)
+    x=np.array([[i,values[i-1],np.mean(values[max(0,i-7):i])] for i in range(1,len(values))]);y=np.array(values[1:])
+    model=LGBMRegressor(n_estimators=20,learning_rate=.1,max_depth=2,random_state=42,verbosity=-1).fit(x,y); series=list(values);out=[]
+    for _ in range(horizon):
+        i=len(series);p=max(0,float(model.predict([[i,series[-1],np.mean(series[-7:])]])[0]));out.append(round(p,3));series.append(p)
+    return out
+
 def metrics(actual: list[float], predicted: list[float]) -> dict[str, float | None]:
     if len(actual) != len(predicted) or not actual: raise ValueError("Equal non-empty series required")
     errors=np.array(predicted)-np.array(actual); actual_a=np.array(actual)
@@ -23,13 +35,20 @@ def metrics(actual: list[float], predicted: list[float]) -> dict[str, float | No
 def rolling_origin_backtest(values:list[float], initial_train:int=7)->dict:
     """Leakage-free one-step rolling-origin comparison of deterministic baselines."""
     if len(values)<=initial_train: raise ValueError("Need more observations than initial training window")
-    actual=[]; moving=[]; seasonal=[]
+    actual=[]; moving=[]; seasonal=[]; lightgbm=[]
     for cutoff in range(initial_train,len(values)):
         train=values[:cutoff];actual.append(values[cutoff])
         moving.append(moving_average(train,1)[0]);seasonal.append(seasonal_naive(train,1)[0])
+        if LGBMRegressor and len(train)>=7:
+            x=np.array([[i, train[i-1], np.mean(train[max(0,i-7):i])] for i in range(1,len(train))]);y=np.array(train[1:])
+            model=LGBMRegressor(n_estimators=20,learning_rate=.1,max_depth=2,random_state=42,verbosity=-1).fit(x,y)
+            i=len(train);lightgbm.append(float(model.predict([[i,train[-1],np.mean(train[-7:])]])[0]))
+        else: lightgbm.append(moving[-1])
     scores={"moving_average":metrics(actual,moving),"seasonal_naive":metrics(actual,seasonal)}
+    if LGBMRegressor: scores["lightgbm"]=metrics(actual,lightgbm)
     selected=min(scores,key=lambda model:scores[model]["mae"] if scores[model]["mae"] is not None else float("inf"))
-    return {"points":len(actual),"models":scores,"selected_model":selected,"actual":actual}
+    chosen={"moving_average":moving,"seasonal_naive":seasonal,"lightgbm":lightgbm}[selected];residual=np.abs(np.array(chosen)-np.array(actual));interval=float(np.quantile(residual,.9));coverage=float(np.mean(np.abs(np.array(actual)-np.array(chosen))<=interval))
+    return {"points":len(actual),"models":scores,"selected_model":selected,"actual":actual,"interval_half_width":round(interval,4),"interval_coverage":round(coverage,4)}
 
 @dataclass
 class Batch: id:str; ingredient:str; quantity_kg:float; use_by_days:int; unit_cost:float
