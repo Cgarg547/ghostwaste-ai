@@ -176,6 +176,8 @@ def create_supplier(data:SupplierIn,db:Session=Depends(db_session)):
 def create_recipe(data:RecipeIn,db:Session=Depends(db_session)):
     if db.scalar(select(RecipeDB).where(RecipeDB.name==data.name.strip())): raise HTTPException(409,"Recipe already exists")
     x=RecipeDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.get("/recipes")
+def recipes(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"yield_servings":x.yield_servings} for x in db.scalars(select(RecipeDB).order_by(RecipeDB.name))]
 @app.post("/recipes/{recipe_id}/ingredients",status_code=201)
 def add_recipe_ingredient(recipe_id:str,data:RecipeIngredientIn,db:Session=Depends(db_session)):
     if not db.get(RecipeDB,recipe_id) or not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Recipe or ingredient not found")
@@ -267,6 +269,8 @@ def risk_scenario(scenario_id:str,db:Session=Depends(db_session)):
     x=db.get(RiskScenarioDB,scenario_id)
     if not x: raise HTTPException(404,"Risk scenario not found")
     return {"id":x.id,"forecast_run_id":x.forecast_run_id,"seed":x.seed,"inputs":json.loads(x.inputs_json),"outputs":json.loads(x.outputs_json),"provenance":"simulated_forecast_recipe_inventory"}
+@app.get("/risk-scenarios")
+def risk_scenarios(db:Session=Depends(db_session)): return [{"id":x.id,"forecast_run_id":x.forecast_run_id,"seed":x.seed,"created_at":x.created_at} for x in db.scalars(select(RiskScenarioDB).order_by(RiskScenarioDB.created_at.desc()))]
 @app.post("/recommendations/from-scenario")
 def recommend(s:Scenario,db:Session=Depends(db_session)):
     result=fefo_risk(s); items=[]
