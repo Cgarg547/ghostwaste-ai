@@ -1,9 +1,11 @@
 """GhostWaste local demo API — synthetic results are not food-safety advice."""
 from __future__ import annotations
 from datetime import date, datetime, timedelta
+import csv
+from io import StringIO
 from typing import Literal
 from uuid import uuid4
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
@@ -53,6 +55,7 @@ class SupplierIn(BaseModel): name:str=Field(min_length=1,max_length=120); lead_d
 class RecipeIn(BaseModel): name:str=Field(min_length=1,max_length=120); yield_servings:float=Field(gt=0)
 class RecipeIngredientIn(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0)
 class StockEventIn(BaseModel): quantity_kg:float=Field(gt=0); occurred_on:date; note:str=Field(default="",max_length=250); reason:str=Field(default="",max_length=120)
+class InventoryCsvIn(BaseModel): csv_text:str=Field(min_length=1,max_length=1_000_000)
 class RiskSimulationIn(BaseModel):
     batches:list[BatchInput]; demand:list[Demand]; as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42
 class PurchaseOptimizeIn(BaseModel):
@@ -101,6 +104,41 @@ def create_batch(data:BatchCreate,db:Session=Depends(db_session)):
     if data.use_by<data.received_on: raise HTTPException(422,"Use-by date cannot precede received date")
     if not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Ingredient not found")
     x=BatchDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+def safe_csv(value:object)->str:
+    value=str(value)
+    return "'"+value if value[:1] in ("=","+","-","@") else value
+@app.get("/inventory/export.csv")
+def export_inventory(db:Session=Depends(db_session)):
+    stream=StringIO(); writer=csv.writer(stream);writer.writerow(["batch_id","ingredient","quantity_kg","unit_cost","received_on","use_by"])
+    for b in db.scalars(select(BatchDB).join(BatchDB.ingredient).order_by(BatchDB.use_by)):
+        writer.writerow([safe_csv(b.id),safe_csv(b.ingredient.name),b.quantity_kg,b.unit_cost,b.received_on,b.use_by])
+    return Response(stream.getvalue(),media_type="text/csv",headers={"Content-Disposition":"attachment; filename=ghostwaste-inventory.csv"})
+@app.post("/inventory/import")
+def import_inventory(data:InventoryCsvIn,db:Session=Depends(db_session)):
+    try:
+        rows=list(csv.DictReader(StringIO(data.csv_text)))
+    except csv.Error as e: raise HTTPException(422,f"Invalid CSV: {e}")
+    required={"ingredient","quantity_kg","unit_cost","received_on","use_by","storage_category"}
+    if not rows or not rows[0] or not required.issubset(rows[0]): raise HTTPException(422,"CSV requires ingredient, quantity_kg, unit_cost, received_on, use_by, storage_category")
+    staged=[]
+    try:
+        for i,row in enumerate(rows,2):
+            name=row["ingredient"].strip()
+            if not name or name[0] in "=+-@": raise ValueError(f"row {i}: unsafe or missing ingredient")
+            quantity=float(row["quantity_kg"]); cost=float(row["unit_cost"]); received=date.fromisoformat(row["received_on"]); use_by=date.fromisoformat(row["use_by"]); category=row["storage_category"].strip()
+            if quantity<=0 or cost<0 or use_by<received or category not in {"ambient","chilled","frozen"}: raise ValueError(f"row {i}: invalid values")
+            staged.append((name,quantity,cost,received,use_by,category))
+    except (ValueError,KeyError) as e: raise HTTPException(422,f"CSV validation failed: {e}")
+    try:
+        for name,quantity,cost,received,use_by,category in staged:
+            ingredient=db.scalar(select(IngredientDB).where(IngredientDB.name==name))
+            if not ingredient:
+                ingredient=IngredientDB(id=str(uuid4()),name=name,unit="kg",storage_category=category);db.add(ingredient);db.flush()
+            db.add(BatchDB(id=str(uuid4()),ingredient_id=ingredient.id,quantity_kg=quantity,unit_cost=cost,received_on=received,use_by=use_by))
+        db.add(AuditEventDB(event_type="inventory_import",detail=f"{len(staged)} CSV rows"));db.commit()
+    except Exception:
+        db.rollback();raise HTTPException(409,"Import rolled back; no inventory was changed")
+    return {"imported_batches":len(staged),"provenance":"csv_user_input"}
 @app.get("/suppliers")
 def suppliers(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"lead_days":x.lead_days,"minimum_order_kg":x.minimum_order_kg} for x in db.scalars(select(SupplierDB).order_by(SupplierDB.name))]
 @app.post("/suppliers",status_code=201)

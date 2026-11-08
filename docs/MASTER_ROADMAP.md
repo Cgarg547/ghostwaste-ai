@@ -3,7 +3,7 @@
 | Sprint | Status | Local evidence / next dependency |
 |---|---|---|
 | 1 Foundation | PASS | Branch audit, API tests and Next build. Browser automation unavailable. |
-| 2 Data and inventory | PARTIAL | Supplier/recipe/event entities and stock-integrity operations pass tests; CSV and executable Alembic revisions remain. |
+| 2 Data and inventory | PARTIAL | Fresh SQLite Alembic upgrade, validated atomic CSV import/export, entities and stock-integrity tests pass; unit conversions and production migration policy remain. |
 | 3 Forecasting | PARTIAL | Deterministic moving-average/seasonal-naive utilities and metrics; no LightGBM or rolling-origin production run. |
 | 4 Waste risk | PASS | Multi-batch FEFO plus seeded Monte Carlo API and tests. |
 | 5 Optimization | PARTIAL | OR-Tools linear purchase planner; no multi-ingredient recipe/prep solver. |

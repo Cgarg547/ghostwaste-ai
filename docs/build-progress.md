@@ -4,6 +4,7 @@
 |---|---|---|
 | Baseline audit | PASS | `docs/baseline-audit.md`; initial test/build output. |
 | Persistent inventory vertical slice | PASS | SQLite ingredient/batch/supplier/recipe APIs plus transactional consumption and waste recording in `apps/api/main.py`; integrity test passes. |
+| Migration and CSV workflow | PASS | Initial Alembic revision upgrades a fresh SQLite DB; validated atomic CSV import and formula-safe export tested. |
 | FEFO waste-risk engine | PASS | `/scenario` uses ordered batch allocation; unit tests cover primary and overlap cases. |
 | Forecasting | PARTIAL | Moving-average baseline endpoint only; no backtested ML candidate. |
 | Optimization | PARTIAL | OR-Tools single-ingredient purchase planner implemented; multi-ingredient preparation model remains. |
