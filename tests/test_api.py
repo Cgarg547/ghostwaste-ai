@@ -60,6 +60,16 @@ def test_persisted_forecast_run_uses_rolling_origin_selection():
     assert body['evaluation']['points']==5
     assert len(client.get(f'/forecasts/{menu_item}/history').json())==1
 
+def test_forecast_can_translate_to_recipe_ingredient_demand():
+    suffix=str(uuid4()); menu=f'menu-{suffix}'
+    ingredient=client.post('/ingredients',json={'name':f'ingredient-{suffix}','storage_category':'chilled'}).json()
+    recipe=client.post('/recipes',json={'name':menu,'yield_servings':2}).json()
+    client.post(f"/recipes/{recipe['id']}/ingredients",json={'ingredient_id':ingredient['id'],'quantity_kg':.5})
+    for day in range(1,9): client.post('/sales',json={'menu_item':menu,'sold_on':f'2026-09-{day:02d}','quantity':2})
+    run=client.post(f'/forecasts/{menu}',json={'horizon':2,'initial_train':4}).json()
+    demand=client.get(f"/forecasts/{run['id']}/ingredient-demand").json()
+    assert demand['ingredient_demand'][0]['required_kg']==1
+
 def test_supplier_recipe_and_stock_events_preserve_integrity():
     suffix=str(uuid4())
     ingredient=client.post('/ingredients',json={'name':f'carrot-{suffix}','storage_category':'chilled'}).json()

@@ -5,7 +5,7 @@
 | 1 Foundation | PASS | Branch audit, API tests and Next build. Browser automation unavailable. |
 | 2 Data and inventory | PASS | Fresh SQLite migration, atomic idempotent CSV import/export, canonical mass conversion, entities and stock-integrity tests pass. Production sets `GHOSTWASTE_AUTO_SCHEMA=false` after migration. |
 | 3 Forecasting | PARTIAL | Rolling-origin baseline selection, persisted forecast runs/history APIs and reproducible synthetic evidence pass tests; LightGBM and interval calibration remain. |
-| 4 Waste risk | PASS | Multi-batch FEFO plus seeded Monte Carlo API and tests. |
+| 4 Waste risk | PARTIAL | Multi-batch FEFO plus seeded Monte Carlo API/tests and recipe-driven forecast ingredient-demand endpoint; persisted risk scenarios remain. |
 | 5 Optimization | PARTIAL | OR-Tools linear purchase planner; no multi-ingredient recipe/prep solver. |
 | 6 Web app | PARTIAL | Functional scenario lab and recommendation flow; required product pages remain. |
 | 7 Evaluation | PARTIAL | Reproducible synthetic fixture experiment script; no real dataset/pilot. |

@@ -206,6 +206,19 @@ def create_forecast_run(menu_item:str,data:ForecastRunIn,db:Session=Depends(db_s
 @app.get("/forecasts/{menu_item}/history")
 def forecast_history(menu_item:str,db:Session=Depends(db_session)):
     return [{"id":x.id,"model":x.model,"metrics":json.loads(x.metrics_json),"predictions":json.loads(x.predictions_json),"created_at":x.created_at} for x in db.scalars(select(ForecastRunDB).where(ForecastRunDB.menu_item==menu_item).order_by(ForecastRunDB.created_at.desc()))]
+@app.get("/forecasts/{run_id}/ingredient-demand")
+def ingredient_demand(run_id:str,db:Session=Depends(db_session)):
+    run=db.get(ForecastRunDB,run_id)
+    if not run: raise HTTPException(404,"Forecast run not found")
+    recipe=db.scalar(select(RecipeDB).where(RecipeDB.name==run.menu_item))
+    if not recipe: raise HTTPException(404,"No recipe named for this menu item")
+    servings=sum(x["quantity"] for x in json.loads(run.predictions_json))
+    rows=list(db.scalars(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe.id)))
+    demands=[]
+    for row in rows:
+        ingredient=db.get(IngredientDB,row.ingredient_id)
+        demands.append({"ingredient":ingredient.name,"required_kg":round(servings/recipe.yield_servings*row.quantity_kg,4)})
+    return {"forecast_run_id":run_id,"recipe":recipe.name,"forecast_servings":servings,"ingredient_demand":demands,"provenance":"forecast_plus_recipe","assumptions":["Recipe name equals menu item", "Recipe yield is fixed", "All ingredient quantities are canonical kilograms"]}
 @app.post("/recommendations/from-scenario")
 def recommend(s:Scenario,db:Session=Depends(db_session)):
     result=fefo_risk(s); items=[]
