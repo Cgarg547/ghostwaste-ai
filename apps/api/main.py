@@ -279,3 +279,7 @@ def decide(recommendation_id:str,data:DecisionIn,db:Session=Depends(db_session))
     x=db.get(RecommendationDB,recommendation_id)
     if not x: raise HTTPException(404,"Recommendation not found")
     x.status=data.decision;db.add(AuditEventDB(event_type="recommendation_"+data.decision,detail=f"{recommendation_id}: {data.reason}"));db.commit();return {"id":x.id,"status":x.status,"reason":data.reason}
+@app.get("/recommendations")
+def recommendations(db:Session=Depends(db_session)): return [{"id":x.id,"title":x.title,"status":x.status,"estimated_kg":x.estimated_kg,"created_at":x.created_at} for x in db.scalars(select(RecommendationDB).order_by(RecommendationDB.created_at.desc()))]
+@app.get("/audit-events")
+def audit_events(db:Session=Depends(db_session)): return [{"id":x.id,"event_type":x.event_type,"detail":x.detail,"created_at":x.created_at} for x in db.scalars(select(AuditEventDB).order_by(AuditEventDB.created_at.desc()).limit(100))]
