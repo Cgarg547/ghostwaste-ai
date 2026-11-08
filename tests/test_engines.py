@@ -32,3 +32,9 @@ def test_multi_ingredient_optimizer_respects_lead_time():
     assert result["status"]=="optimal"
     assert result["items"][0]["shortage_kg"]==0
     assert result["items"][1]["shortage_kg"]==4
+
+def test_multi_optimizer_reports_supplier_minimum_and_diagnostics():
+    result=optimize_multi_ingredient([{"ingredient":"beans","available_kg":0,"demand_kg":2,"unit_cost":1,"lead_days":1,"min_order_kg":5,"max_order_kg":10}],7,10)
+    assert result["items"][0]["order_kg"]==5
+    assert result["items"][0]["order_activated"] is True
+    assert "supplier minimum order" in result["diagnostics"]["constraints"]

@@ -6,9 +6,9 @@
 | Working local functionality | PASS | Scenario, inventory, sales, forecast baseline, recommendations; `pytest tests -q` (7 passed) and `npm run build` passed. |
 | AI forecasting | PARTIAL | Moving-average baseline endpoint exists; no validated ML model or chronological metrics. |
 | FEFO waste risk | PASS | Deterministic multi-batch FEFO, expiry hard boundary, tests in `tests/test_api.py`. |
-| Optimization engine | FAIL | OR-Tools purchasing/prep/menu optimization not implemented. |
+| Optimization engine | PASS (demo) | CBC multi-ingredient planning models lead time, supplier minimums, storage and preparation capacity; no order executes automatically. |
 | Waste impact evidence | PARTIAL | Synthetic projections explicitly labeled; no observed intervention outcomes. |
-| Security / production API | PARTIAL | Validated API inputs and local transactions exist; auth, CORS restriction, migrations, rate limits, and upload safety are missing. |
+| Security / production API | PARTIAL | Validated inputs, formula-safe atomic CSV, optional token-protected writes, opt-in CORS and audit trails exist. Production still needs identity, RBAC, rate limits and managed secrets. |
 | Browser functionality | PARTIAL | Production web build passes; no Playwright browser run in this environment. |
 | Public deployment | BLOCKED | Requires user-controlled hosting/account authorization. |
 | Public repository, video, Devpost | BLOCKED | External publication and eligibility confirmation require the user. |

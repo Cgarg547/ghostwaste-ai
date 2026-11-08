@@ -79,6 +79,8 @@ def test_forecast_recipe_workflow_persists_simulated_risk_and_recommendations():
     run=client.post(f'/forecasts/{menu}',json={'horizon':2,'initial_train':4}).json()
     workflow=client.post(f"/workflows/forecast/{run['id']}",json={'as_of':'2026-10-10','horizon_days':2,'seed':7,'storage_capacity_kg':10}).json()
     assert workflow['result']['provenance']=='simulated_forecast_recipe_inventory'
+    assert workflow['result']['monte_carlo']['seed']==7
+    assert workflow['result']['optimization']['diagnostics']['solver']=='CBC mixed integer'
     assert client.get(f"/risk-scenarios/{workflow['scenario_id']}").status_code==200
 
 def test_supplier_recipe_and_stock_events_preserve_integrity():

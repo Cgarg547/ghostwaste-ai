@@ -4,10 +4,12 @@ from datetime import date, datetime, timedelta
 import csv
 import os
 import json
+import hmac
 from io import StringIO
 from typing import Literal
 from uuid import uuid4
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
@@ -70,10 +72,10 @@ class RiskSimulationIn(BaseModel):
     batches:list[BatchInput]; demand:list[Demand]; as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42
 class PurchaseOptimizeIn(BaseModel):
     available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); min_order_kg:float=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,gt=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
-class MultiPlanItem(BaseModel): ingredient:str; available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); lead_days:int=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,ge=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
-class MultiOptimizeIn(BaseModel): items:list[MultiPlanItem]=Field(min_length=1,max_length=100); horizon_days:int=Field(default=7,ge=1,le=90); storage_capacity_kg:float=Field(ge=0)
+class MultiPlanItem(BaseModel): ingredient:str=Field(min_length=1,max_length=120); supplier:str|None=None; available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); lead_days:int=Field(default=0,ge=0); min_order_kg:float=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,ge=0); prep_hours_per_kg:float=Field(default=0,ge=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
+class MultiOptimizeIn(BaseModel): items:list[MultiPlanItem]=Field(min_length=1,max_length=100); horizon_days:int=Field(default=7,ge=1,le=90); storage_capacity_kg:float=Field(ge=0); preparation_capacity_hours:float|None=Field(default=None,ge=0)
 class ForecastRunIn(BaseModel): horizon:int=Field(default=7,ge=1,le=30); initial_train:int=Field(default=7,ge=3,le=365)
-class WorkflowIn(BaseModel): as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); seed:int=42; storage_capacity_kg:float=Field(default=1000,ge=0)
+class WorkflowIn(BaseModel): as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42; storage_capacity_kg:float=Field(default=1000,ge=0); preparation_capacity_hours:float|None=Field(default=None,ge=0)
 def db_session():
     db=SessionLocal()
     try: yield db
@@ -89,14 +91,27 @@ def fefo_risk(s:Scenario)->Result:
             risks.append(Risk(batch_id=b.id,ingredient=b.ingredient,at_risk_kg=risk,potential_cost=round(risk*b.unit_cost,2),days_until_use_by=days))
     return Result(risks=risks,total_at_risk_kg=round(sum(x.at_risk_kg for x in risks),3),total_potential_cost=round(sum(x.potential_cost for x in risks),2),assumptions=["Synthetic inputs; no real restaurant outcome or food-safety decision","FEFO allocation across batches with constant daily ingredient demand","Use-by is a hard boundary; expired batches are never allocated","No supplier arrivals or uncertainty in this deterministic local demo"])
 
-app=FastAPI(title="GhostWaste API",version="0.2.0")
+app=FastAPI(title="GhostWaste API",version="0.3.0",docs_url="/docs" if os.environ.get("GHOSTWASTE_ENABLE_DOCS","true").lower()=="true" else None)
+allowed_origins=[x.strip() for x in os.environ.get("GHOSTWASTE_CORS_ORIGINS","").split(",") if x.strip()]
+if allowed_origins:
+    app.add_middleware(CORSMiddleware,allow_origins=allowed_origins,allow_credentials=False,allow_methods=["GET","POST"],allow_headers=["Authorization","Content-Type"])
+api_token=os.environ.get("GHOSTWASTE_API_TOKEN","")
+@app.middleware("http")
+async def local_demo_access(request:Request,call_next):
+    """Optional token makes the same image safe to put behind a local proxy.
+    No credential is invented or embedded; unset means loopback/demo mode only.
+    """
+    if api_token and request.method not in {"GET","HEAD","OPTIONS"}:
+        supplied=request.headers.get("authorization","").removeprefix("Bearer ")
+        if not hmac.compare_digest(supplied,api_token): return Response("Unauthorized",status_code=401)
+    return await call_next(request)
 auto_schema=os.environ.get("GHOSTWASTE_AUTO_SCHEMA","true").lower()=="true"
 if auto_schema: Base.metadata.create_all(engine)
 @app.on_event("startup")
 def setup():
     if auto_schema: Base.metadata.create_all(engine)
 @app.get("/health")
-def health(): return {"status":"ok","version":"0.2.0","storage":"local SQLite"}
+def health(): return {"status":"ok","version":"0.3.0","storage":"local SQLite","access_mode":"token-protected" if api_token else "local-demo (set GHOSTWASTE_API_TOKEN to protect writes)"}
 @app.post("/scenario",response_model=Result)
 def scenario(s:Scenario): return fefo_risk(s)
 @app.post("/risk/simulate")
@@ -109,7 +124,7 @@ def optimize(data:PurchaseOptimizeIn):
     except ValueError as e: raise HTTPException(422,str(e))
 @app.post("/optimization/multi-ingredient")
 def optimize_multi(data:MultiOptimizeIn):
-    try:return {"provenance":"synthetic_scenario","result":optimize_multi_ingredient([x.model_dump() for x in data.items],data.horizon_days,data.storage_capacity_kg)}
+    try:return {"provenance":"synthetic_scenario","result":optimize_multi_ingredient([x.model_dump() for x in data.items],data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours)}
     except ValueError as e: raise HTTPException(422,str(e))
 @app.get("/ingredients")
 def ingredients(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"unit":x.unit,"storage_category":x.storage_category} for x in db.scalars(select(IngredientDB).order_by(IngredientDB.name))]
@@ -252,10 +267,12 @@ def recipe_workflow(run_id:str,data:WorkflowIn,db:Session):
     for ingredient,demand_kg in requirements.items():
         relevant=[b for b in inventory if b.ingredient.name==ingredient and b.use_by>=data.as_of]
         available=sum(b.quantity_kg for b in relevant);cost=(sum(b.quantity_kg*b.unit_cost for b in relevant)/available) if available else 0
-        items.append({"ingredient":ingredient,"available_kg":available,"demand_kg":demand_kg,"unit_cost":cost,"lead_days":0,"max_order_kg":1000})
-    plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg) if items else {"status":"infeasible","items":[]}
-    output={"risk":risk.model_dump(),"optimization":plan,"requirements_kg":requirements,"provenance":"simulated_forecast_recipe_inventory","warning":"Simulated planning output; no purchase or food-safety action is executed."}
-    record=RiskScenarioDB(id=str(uuid4()),forecast_run_id=run_id,seed=data.seed,inputs_json=json.dumps({"as_of":str(data.as_of),"horizon_days":data.horizon_days}),outputs_json=json.dumps(output));db.add(record)
+        supplier=db.scalar(select(SupplierDB).order_by(SupplierDB.lead_days).limit(1))
+        items.append({"ingredient":ingredient,"available_kg":available,"demand_kg":demand_kg,"unit_cost":cost,"lead_days":supplier.lead_days if supplier else 0,"min_order_kg":supplier.minimum_order_kg if supplier else 0,"supplier":supplier.name if supplier else None,"max_order_kg":1000})
+    plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[]}
+    simulation=monte_carlo_risk([SimBatch(b.id,b.ingredient.name,b.quantity_kg,(b.use_by-data.as_of).days,b.unit_cost) for b in inventory],{k:v/data.horizon_days for k,v in requirements.items()},data.horizon_days,data.trials,data.seed).__dict__
+    output={"risk":risk.model_dump(),"monte_carlo":simulation,"optimization":plan,"requirements_kg":requirements,"provenance":"simulated_forecast_recipe_inventory","warning":"Simulated planning output; no purchase or food-safety action is executed."}
+    record=RiskScenarioDB(id=str(uuid4()),forecast_run_id=run_id,seed=data.seed,inputs_json=json.dumps({"as_of":str(data.as_of),"horizon_days":data.horizon_days,"trials":data.trials,"storage_capacity_kg":data.storage_capacity_kg,"preparation_capacity_hours":data.preparation_capacity_hours}),outputs_json=json.dumps(output));db.add(record)
     recommendations=[]
     for row in plan.get("items",[]):
         if row["order_kg"]>0 or row["shortage_kg"]>0:

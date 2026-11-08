@@ -95,19 +95,31 @@ def optimize_purchase(available_kg:float, demand_kg:float, unit_cost:float, min_
     status=solver.Solve(); names={solver.OPTIMAL:"optimal",solver.FEASIBLE:"feasible"}
     return {"status":names.get(status,"infeasible"),"recommended_order_kg":round(order.solution_value(),3) if status in names else None,"expected_shortage_kg":round(shortage.solution_value(),3) if status in names else None,"expected_surplus_kg":round(surplus.solution_value(),3) if status in names else None,"objective":round(solver.Objective().Value(),3) if status in names else None,"assumptions":["Single-ingredient linear purchase planning", "Recommendation only; manager approval required", "No order executes through this API"]}
 
-def optimize_multi_ingredient(items:list[dict], horizon_days:int, storage_capacity_kg:float)->dict:
-    """Joint LP plan; orders arriving after horizon cannot satisfy current demand."""
+def optimize_multi_ingredient(items:list[dict], horizon_days:int, storage_capacity_kg:float, preparation_capacity_hours:float|None=None)->dict:
+    """Joint purchase plan with supplier minimums and optional prep-hour capacity.
+
+    CBC is deliberately used here because supplier minimums are a disjunction
+    (order nothing, or order at least the supplier minimum), which GLOP cannot
+    represent correctly.
+    """
     if horizon_days<1 or storage_capacity_kg<0: raise ValueError("Invalid planning horizon or capacity")
-    solver=pywraplp.Solver.CreateSolver("GLOP")
-    if not solver: raise RuntimeError("OR-Tools GLOP solver unavailable")
-    orders=[]; shortages=[]; surpluses=[]
+    if preparation_capacity_hours is not None and preparation_capacity_hours < 0: raise ValueError("Invalid preparation capacity")
+    solver=pywraplp.Solver.CreateSolver("CBC_MIXED_INTEGER_PROGRAMMING")
+    if not solver: raise RuntimeError("OR-Tools CBC solver unavailable")
+    orders=[]; shortages=[]; surpluses=[]; ordered=[]
     for i,x in enumerate(items):
         if min(x["available_kg"],x["demand_kg"],x["unit_cost"],x.get("max_order_kg",1000),x.get("lead_days",0))<0: raise ValueError("Negative item value")
-        arrives=x.get("lead_days",0)<=horizon_days; order=solver.NumVar(0,x.get("max_order_kg",1000) if arrives else 0,f"order_{i}"); shortage=solver.NumVar(0,solver.infinity(),f"shortage_{i}"); surplus=solver.NumVar(0,solver.infinity(),f"surplus_{i}")
-        solver.Add(x["available_kg"]+order+shortage-surplus==x["demand_kg"]);orders.append(order);shortages.append(shortage);surpluses.append(surplus)
+        maximum=x.get("max_order_kg",1000); minimum=x.get("min_order_kg",0)
+        if minimum > maximum: raise ValueError("Minimum order exceeds maximum order")
+        arrives=x.get("lead_days",0)<=horizon_days; order=solver.NumVar(0,maximum if arrives else 0,f"order_{i}"); active=solver.IntVar(0,1,f"ordered_{i}"); shortage=solver.NumVar(0,solver.infinity(),f"shortage_{i}"); surplus=solver.NumVar(0,solver.infinity(),f"surplus_{i}")
+        solver.Add(order <= maximum*active); solver.Add(order >= minimum*active)
+        solver.Add(x["available_kg"]+order+shortage-surplus==x["demand_kg"]);orders.append(order);shortages.append(shortage);surpluses.append(surplus);ordered.append(active)
     solver.Add(solver.Sum(surpluses)<=storage_capacity_kg)
+    if preparation_capacity_hours is not None:
+        # Prep is a demand-side capacity: orders do not create more kitchen time.
+        solver.Add(solver.Sum([x.get("prep_hours_per_kg",0)*x["demand_kg"] for x in items]) <= preparation_capacity_hours)
     solver.Minimize(solver.Sum([x["unit_cost"]*orders[i]+x.get("shortage_penalty",20)*shortages[i]+x.get("waste_penalty",2)*surpluses[i] for i,x in enumerate(items)]))
     status=solver.Solve(); names={solver.OPTIMAL:"optimal",solver.FEASIBLE:"feasible"}
     if status not in names:return {"status":"infeasible","items":[]}
-    rows=[{"ingredient":x["ingredient"],"order_kg":round(orders[i].solution_value(),3),"shortage_kg":round(shortages[i].solution_value(),3),"surplus_kg":round(surpluses[i].solution_value(),3),"lead_time_blocks_order":x.get("lead_days",0)>horizon_days} for i,x in enumerate(items)]
-    return {"status":names[status],"items":rows,"objective":round(solver.Objective().Value(),3),"baseline_shortage_kg":round(sum(max(0,x["demand_kg"]-x["available_kg"]) for x in items),3),"optimized_shortage_kg":round(sum(x["shortage_kg"] for x in rows),3),"warning":"Planning recommendation only; no order is executed without manager approval."}
+    rows=[{"ingredient":x["ingredient"],"supplier":x.get("supplier"),"order_kg":round(orders[i].solution_value(),3),"shortage_kg":round(shortages[i].solution_value(),3),"surplus_kg":round(surpluses[i].solution_value(),3),"lead_time_blocks_order":x.get("lead_days",0)>horizon_days,"minimum_order_kg":x.get("min_order_kg",0),"order_activated":bool(round(ordered[i].solution_value()))} for i,x in enumerate(items)]
+    return {"status":names[status],"items":rows,"objective":round(solver.Objective().Value(),3),"baseline_shortage_kg":round(sum(max(0,x["demand_kg"]-x["available_kg"]) for x in items),3),"optimized_shortage_kg":round(sum(x["shortage_kg"] for x in rows),3),"diagnostics":{"storage_capacity_kg":storage_capacity_kg,"storage_surplus_kg":round(sum(x["surplus_kg"] for x in rows),3),"preparation_capacity_hours":preparation_capacity_hours,"solver":"CBC mixed integer","constraints":["supplier lead time", "supplier minimum order", "storage capacity"] + (["preparation capacity"] if preparation_capacity_hours is not None else [])},"warning":"Planning recommendation only; no order is executed without manager approval."}

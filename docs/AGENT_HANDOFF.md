@@ -1,8 +1,8 @@
 # Agent handoff
 
 - **Branch:** `feat/full-local-demo`
-- **Starting checkpoint:** `2800e91`
-- **Current work:** Docker proxy and persistence verified: frontend `/api/openapi.json` responds and an ingredient survived an API-only safe recreation of the volume-backed SQLite container.
-- **Resume:** `source .venv/bin/activate && python -m pytest tests -q`; `cd apps/web && npm run build`; `python scripts/run_experiments.py`.
+- **Starting checkpoint:** `7ee0a4b`
+- **Current work:** Stored forecast workflows now include reproducible Monte Carlo risk and CBC planning diagnostics; the route-addressable web console covers the local restaurant workflow.
+- **Resume:** `source .venv/bin/activate && python -m pytest tests -q`; `cd apps/web && npm run build`.
 - **Known external blockers:** deployment account/access, public repository, Devpost, verified video, student eligibility.
-- **Next actionable task:** connect Monte Carlo uncertainty to stored workflow scenarios and persist optimization scenario diagnostics.
+- **Next actionable task:** install Playwright/browser binaries when network approval is available, then run desktop and mobile E2E against Docker Compose or local API/web processes.
