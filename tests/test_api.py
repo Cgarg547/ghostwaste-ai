@@ -73,6 +73,8 @@ def test_forecast_can_translate_to_recipe_ingredient_demand():
 def test_forecast_recipe_workflow_persists_simulated_risk_and_recommendations():
     suffix=str(uuid4()); menu=f'wf-{suffix}'
     ingredient=client.post('/ingredients',json={'name':f'wf-ing-{suffix}','storage_category':'chilled'}).json()
+    supplier=client.post('/suppliers',json={'name':f'wf-supplier-{suffix}','lead_days':1,'minimum_order_kg':0}).json()
+    assert client.post(f"/suppliers/{supplier['id']}/ingredients",json={'ingredient_id':ingredient['id'],'purchase_unit_cost':3}).status_code==201
     recipe=client.post('/recipes',json={'name':menu,'yield_servings':1}).json();client.post(f"/recipes/{recipe['id']}/ingredients",json={'ingredient_id':ingredient['id'],'quantity_kg':1})
     client.post('/batches',json={'ingredient_id':ingredient['id'],'quantity_kg':1,'unit_cost':3,'received_on':'2026-09-01','use_by':'2026-10-12'})
     for day in range(1,9): client.post('/sales',json={'menu_item':menu,'sold_on':f'2026-09-{day:02d}','quantity':2})
@@ -94,6 +96,16 @@ def test_supplier_recipe_and_stock_events_preserve_integrity():
     assert client.post(f"/batches/{batch['id']}/consume",json={'quantity_kg':1,'occurred_on':'2026-11-02'}).json()['remaining_kg']==1
     assert client.post(f"/batches/{batch['id']}/waste",json={'quantity_kg':2,'occurred_on':'2026-11-03','reason':'spoiled'}).status_code==409
     assert client.post(f"/batches/{batch['id']}/waste",json={'quantity_kg':1,'occurred_on':'2026-11-03','reason':'spoiled'}).json()['remaining_kg']==0
+
+def test_supplier_must_be_explicitly_linked_and_decisions_are_final():
+    suffix=str(uuid4()); ingredient=client.post('/ingredients',json={'name':f'linked-{suffix}'}).json()
+    supplier=client.post('/suppliers',json={'name':f'supplier-{suffix}','lead_days':1,'minimum_order_kg':2}).json()
+    linked=client.post(f"/suppliers/{supplier['id']}/ingredients",json={'ingredient_id':ingredient['id'],'purchase_unit_cost':4})
+    assert linked.status_code==201 and any(x['id']==supplier['id'] and x['ingredients'][0]['ingredient_id']==ingredient['id'] for x in client.get('/suppliers').json())
+    scenario=client.post('/recommendations/from-scenario',json={'as_of':'2026-11-08','batches':[{'id':f'b-{suffix}','ingredient':'x','quantity_kg':1,'use_by':'2026-11-08','unit_cost':2}],'demand':[]}).json()
+    recommendation=scenario['recommendations'][0]['id']
+    assert client.post(f'/recommendations/{recommendation}/decision',json={'decision':'accepted','reason':'Manager reviewed local plan'}).status_code==200
+    assert client.post(f'/recommendations/{recommendation}/decision',json={'decision':'rejected','reason':'Trying second decision'}).status_code==409
 
 def test_csv_import_is_atomic_and_export_is_formula_safe():
     bad="ingredient,quantity_kg,unit_cost,received_on,use_by,storage_category\n=unsafe,1,2,2026-11-01,2026-11-02,chilled"

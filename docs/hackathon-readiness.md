@@ -1,5 +1,14 @@
 # Hackathon readiness audit — 2026-11-08
 
+## Latest verified local gate
+
+- ` .venv/bin/python -m pytest tests -q`: **22 passed** (27 non-failing deprecation warnings).
+- `cd apps/web && npm run build`: **passed**; routes `/` and dynamic `/<section>` generated.
+- `git diff --check`: passed.
+- Supplier constraints are now explicit: a purchase plan only uses a supplier linked to that ingredient with a known local purchase price. Unlinked or price-unknown ingredients generate no purchase recommendation.
+- Browser E2E was not run: no Playwright package/binaries were present, and no dependency download was attempted.
+- Docker daemon access was unavailable to this sandbox, so running-container/build freshness and named-volume state were not independently inspected. No Docker command that changes volumes was run.
+
 | Requirement | Status | Evidence / next action |
 |---|---|---|
 | Theme alignment | PASS | Expiry-aware food inventory planning; `apps/api/main.py`. |

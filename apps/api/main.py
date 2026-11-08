@@ -32,6 +32,9 @@ class AuditEventDB(Base):
     __tablename__="audit_events"; id:Mapped[int]=mapped_column(Integer,primary_key=True); event_type:Mapped[str]=mapped_column(String,index=True); detail:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class SupplierDB(Base):
     __tablename__="suppliers"; id:Mapped[str]=mapped_column(String,primary_key=True); name:Mapped[str]=mapped_column(String,unique=True,index=True); lead_days:Mapped[int]=mapped_column(Integer,default=0); minimum_order_kg:Mapped[float]=mapped_column(Float,default=0)
+class SupplierIngredientDB(Base):
+    """Explicit availability and price; a supplier is never inferred for an ingredient."""
+    __tablename__="supplier_ingredients"; id:Mapped[int]=mapped_column(Integer,primary_key=True); supplier_id:Mapped[str]=mapped_column(ForeignKey("suppliers.id"),index=True); ingredient_id:Mapped[str]=mapped_column(ForeignKey("ingredients.id"),index=True); purchase_unit_cost:Mapped[float|None]=mapped_column(Float,nullable=True)
 class RecipeDB(Base):
     __tablename__="recipes"; id:Mapped[str]=mapped_column(String,primary_key=True); name:Mapped[str]=mapped_column(String,unique=True,index=True); yield_servings:Mapped[float]=mapped_column(Float,default=1)
 class RecipeIngredientDB(Base):
@@ -62,8 +65,9 @@ class Result(BaseModel): provenance:Literal["synthetic_scenario"]="synthetic_sce
 class IngredientIn(BaseModel): name:str=Field(min_length=1,max_length=120); unit:Literal["kg"]="kg"; storage_category:Literal["ambient","chilled","frozen"]="chilled"
 class BatchCreate(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0); unit_cost:float=Field(ge=0); received_on:date; use_by:date
 class SaleIn(BaseModel): menu_item:str=Field(min_length=1); sold_on:date; quantity:float=Field(ge=0)
-class DecisionIn(BaseModel): decision:Literal["accepted","rejected"]; reason:str=Field(default="",max_length=500)
+class DecisionIn(BaseModel): decision:Literal["accepted","rejected"]; reason:str=Field(min_length=3,max_length=500)
 class SupplierIn(BaseModel): name:str=Field(min_length=1,max_length=120); lead_days:int=Field(default=0,ge=0,le=365); minimum_order_kg:float=Field(default=0,ge=0)
+class SupplierIngredientIn(BaseModel): ingredient_id:str; purchase_unit_cost:float|None=Field(default=None,ge=0)
 class RecipeIn(BaseModel): name:str=Field(min_length=1,max_length=120); yield_servings:float=Field(gt=0)
 class RecipeIngredientIn(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0)
 class StockEventIn(BaseModel): quantity_kg:float=Field(gt=0); occurred_on:date; note:str=Field(default="",max_length=250); reason:str=Field(default="",max_length=120)
@@ -182,11 +186,20 @@ def import_inventory(data:InventoryCsvIn,db:Session=Depends(db_session)):
         db.rollback();raise HTTPException(409,"Import rolled back; no inventory was changed")
     return {"imported_batches":imported,"skipped_duplicates":skipped,"provenance":"csv_user_input"}
 @app.get("/suppliers")
-def suppliers(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"lead_days":x.lead_days,"minimum_order_kg":x.minimum_order_kg} for x in db.scalars(select(SupplierDB).order_by(SupplierDB.name))]
+def suppliers(db:Session=Depends(db_session)):
+    return [{"id":x.id,"name":x.name,"lead_days":x.lead_days,"minimum_order_kg":x.minimum_order_kg,"ingredients":[{"ingredient_id":a.ingredient_id,"ingredient":db.get(IngredientDB,a.ingredient_id).name,"purchase_unit_cost":a.purchase_unit_cost} for a in db.scalars(select(SupplierIngredientDB).where(SupplierIngredientDB.supplier_id==x.id))]} for x in db.scalars(select(SupplierDB).order_by(SupplierDB.name))]
 @app.post("/suppliers",status_code=201)
 def create_supplier(data:SupplierIn,db:Session=Depends(db_session)):
     if db.scalar(select(SupplierDB).where(SupplierDB.name==data.name.strip())): raise HTTPException(409,"Supplier already exists")
     x=SupplierDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.post("/suppliers/{supplier_id}/ingredients",status_code=201)
+def link_supplier_ingredient(supplier_id:str,data:SupplierIngredientIn,db:Session=Depends(db_session)):
+    if not db.get(SupplierDB,supplier_id): raise HTTPException(404,"Supplier not found")
+    if not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Ingredient not found")
+    existing=db.scalar(select(SupplierIngredientDB).where(SupplierIngredientDB.supplier_id==supplier_id,SupplierIngredientDB.ingredient_id==data.ingredient_id))
+    if existing:
+        existing.purchase_unit_cost=data.purchase_unit_cost; db.commit(); return {"id":existing.id,"supplier_id":supplier_id,**data.model_dump()}
+    x=SupplierIngredientDB(supplier_id=supplier_id,**data.model_dump());db.add(x);db.commit();return {"id":x.id,"supplier_id":supplier_id,**data.model_dump()}
 @app.post("/recipes",status_code=201)
 def create_recipe(data:RecipeIn,db:Session=Depends(db_session)):
     if db.scalar(select(RecipeDB).where(RecipeDB.name==data.name.strip())): raise HTTPException(409,"Recipe already exists")
@@ -213,6 +226,7 @@ def consume(batch_id:str,data:StockEventIn,db:Session=Depends(db_session)): retu
 def waste(batch_id:str,data:StockEventIn,db:Session=Depends(db_session)): return record_stock_event(batch_id,data,"waste",db)
 @app.post("/sales",status_code=201)
 def create_sale(data:SaleIn,db:Session=Depends(db_session)):
+    if db.scalar(select(DailySaleDB).where(DailySaleDB.menu_item==data.menu_item.strip(),DailySaleDB.sold_on==data.sold_on)): raise HTTPException(409,"A sale already exists for this menu item and date")
     x=DailySaleDB(**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
 @app.get("/forecast/{menu_item}")
 def forecast(menu_item:str,horizon:int=7,db:Session=Depends(db_session)):
@@ -266,10 +280,14 @@ def recipe_workflow(run_id:str,data:WorkflowIn,db:Session):
     items=[]
     for ingredient,demand_kg in requirements.items():
         relevant=[b for b in inventory if b.ingredient.name==ingredient and b.use_by>=data.as_of]
-        available=sum(b.quantity_kg for b in relevant);cost=(sum(b.quantity_kg*b.unit_cost for b in relevant)/available) if available else 0
-        supplier=db.scalar(select(SupplierDB).order_by(SupplierDB.lead_days).limit(1))
-        items.append({"ingredient":ingredient,"available_kg":available,"demand_kg":demand_kg,"unit_cost":cost,"lead_days":supplier.lead_days if supplier else 0,"min_order_kg":supplier.minimum_order_kg if supplier else 0,"supplier":supplier.name if supplier else None,"max_order_kg":1000})
-    plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[]}
+        available=sum(b.quantity_kg for b in relevant)
+        ingredient_row=db.scalar(select(IngredientDB).where(IngredientDB.name==ingredient))
+        link=db.scalar(select(SupplierIngredientDB).where(SupplierIngredientDB.ingredient_id==ingredient_row.id).limit(1))
+        supplier=db.get(SupplierDB,link.supplier_id) if link else None
+        # An unlinked supplier or unknown purchase price cannot produce a purchase recommendation.
+        if supplier and link and link.purchase_unit_cost is not None:
+            items.append({"ingredient":ingredient,"available_kg":available,"demand_kg":demand_kg,"unit_cost":link.purchase_unit_cost,"lead_days":supplier.lead_days,"min_order_kg":supplier.minimum_order_kg,"supplier":supplier.name,"max_order_kg":1000})
+    plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[],"warning":"No ingredients have an assigned supplier with a known purchase price; no purchase recommendation was calculated."}
     simulation=monte_carlo_risk([SimBatch(b.id,b.ingredient.name,b.quantity_kg,(b.use_by-data.as_of).days,b.unit_cost) for b in inventory],{k:v/data.horizon_days for k,v in requirements.items()},data.horizon_days,data.trials,data.seed).__dict__
     output={"risk":risk.model_dump(),"monte_carlo":simulation,"optimization":plan,"requirements_kg":requirements,"provenance":"simulated_forecast_recipe_inventory","warning":"Simulated planning output; no purchase or food-safety action is executed."}
     record=RiskScenarioDB(id=str(uuid4()),forecast_run_id=run_id,seed=data.seed,inputs_json=json.dumps({"as_of":str(data.as_of),"horizon_days":data.horizon_days,"trials":data.trials,"storage_capacity_kg":data.storage_capacity_kg,"preparation_capacity_hours":data.preparation_capacity_hours}),outputs_json=json.dumps(output));db.add(record)
@@ -299,6 +317,7 @@ def recommend(s:Scenario,db:Session=Depends(db_session)):
 def decide(recommendation_id:str,data:DecisionIn,db:Session=Depends(db_session)):
     x=db.get(RecommendationDB,recommendation_id)
     if not x: raise HTTPException(404,"Recommendation not found")
+    if x.status!="pending": raise HTTPException(409,"Recommendation already has a final decision")
     x.status=data.decision;db.add(AuditEventDB(event_type="recommendation_"+data.decision,detail=f"{recommendation_id}: {data.reason}"));db.commit();return {"id":x.id,"status":x.status,"reason":data.reason}
 @app.get("/recommendations")
 def recommendations(db:Session=Depends(db_session)): return [{"id":x.id,"title":x.title,"status":x.status,"estimated_kg":x.estimated_kg,"created_at":x.created_at} for x in db.scalars(select(RecommendationDB).order_by(RecommendationDB.created_at.desc()))]
