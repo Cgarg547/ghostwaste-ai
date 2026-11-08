@@ -7,3 +7,4 @@ sqlalchemy>=2.0,<3
 numpy>=2.0,<3
 pandas>=2.0,<4
 ortools>=9.10,<10
+alembic>=1.14,<2

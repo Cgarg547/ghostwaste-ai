@@ -49,3 +49,15 @@ def test_inventory_and_forecast_workflow(tmp_path, monkeypatch):
     forecast=client.get(f'/forecast/{menu_item}').json()
     assert forecast['model'] == 'moving_average_7_or_less'
     assert forecast['predictions'][0]['quantity'] == 11
+
+def test_supplier_recipe_and_stock_events_preserve_integrity():
+    suffix=str(uuid4())
+    ingredient=client.post('/ingredients',json={'name':f'carrot-{suffix}','storage_category':'chilled'}).json()
+    supplier=client.post('/suppliers',json={'name':f'farm-{suffix}','lead_days':2,'minimum_order_kg':5})
+    assert supplier.status_code==201
+    recipe=client.post('/recipes',json={'name':f'soup-{suffix}','yield_servings':10}).json()
+    assert client.post(f"/recipes/{recipe['id']}/ingredients",json={'ingredient_id':ingredient['id'],'quantity_kg':.2}).status_code==201
+    batch=client.post('/batches',json={'ingredient_id':ingredient['id'],'quantity_kg':2,'unit_cost':2,'received_on':'2026-11-01','use_by':'2026-11-10'}).json()
+    assert client.post(f"/batches/{batch['id']}/consume",json={'quantity_kg':1,'occurred_on':'2026-11-02'}).json()['remaining_kg']==1
+    assert client.post(f"/batches/{batch['id']}/waste",json={'quantity_kg':2,'occurred_on':'2026-11-03','reason':'spoiled'}).status_code==409
+    assert client.post(f"/batches/{batch['id']}/waste",json={'quantity_kg':1,'occurred_on':'2026-11-03','reason':'spoiled'}).json()['remaining_kg']==0

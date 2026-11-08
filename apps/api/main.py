@@ -22,6 +22,16 @@ class RecommendationDB(Base):
     __tablename__="recommendations"; id:Mapped[str]=mapped_column(String,primary_key=True); title:Mapped[str]=mapped_column(String); status:Mapped[str]=mapped_column(String,default="pending",index=True); estimated_kg:Mapped[float]=mapped_column(Float,default=0); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class AuditEventDB(Base):
     __tablename__="audit_events"; id:Mapped[int]=mapped_column(Integer,primary_key=True); event_type:Mapped[str]=mapped_column(String,index=True); detail:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+class SupplierDB(Base):
+    __tablename__="suppliers"; id:Mapped[str]=mapped_column(String,primary_key=True); name:Mapped[str]=mapped_column(String,unique=True,index=True); lead_days:Mapped[int]=mapped_column(Integer,default=0); minimum_order_kg:Mapped[float]=mapped_column(Float,default=0)
+class RecipeDB(Base):
+    __tablename__="recipes"; id:Mapped[str]=mapped_column(String,primary_key=True); name:Mapped[str]=mapped_column(String,unique=True,index=True); yield_servings:Mapped[float]=mapped_column(Float,default=1)
+class RecipeIngredientDB(Base):
+    __tablename__="recipe_ingredients"; id:Mapped[int]=mapped_column(Integer,primary_key=True); recipe_id:Mapped[str]=mapped_column(ForeignKey("recipes.id"),index=True); ingredient_id:Mapped[str]=mapped_column(ForeignKey("ingredients.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float)
+class ConsumptionEventDB(Base):
+    __tablename__="consumption_events"; id:Mapped[str]=mapped_column(String,primary_key=True); batch_id:Mapped[str]=mapped_column(ForeignKey("inventory_batches.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); occurred_on:Mapped[date]=mapped_column(Date); note:Mapped[str]=mapped_column(String,default="")
+class WasteEventDB(Base):
+    __tablename__="waste_events"; id:Mapped[str]=mapped_column(String,primary_key=True); batch_id:Mapped[str]=mapped_column(ForeignKey("inventory_batches.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); occurred_on:Mapped[date]=mapped_column(Date); reason:Mapped[str]=mapped_column(String)
 
 class BatchInput(BaseModel):
     id:str; ingredient:str=Field(min_length=1,max_length=120); quantity_kg:float=Field(ge=0); use_by:date; unit_cost:float=Field(ge=0); received_on:date|None=None
@@ -39,6 +49,10 @@ class IngredientIn(BaseModel): name:str=Field(min_length=1,max_length=120); unit
 class BatchCreate(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0); unit_cost:float=Field(ge=0); received_on:date; use_by:date
 class SaleIn(BaseModel): menu_item:str=Field(min_length=1); sold_on:date; quantity:float=Field(ge=0)
 class DecisionIn(BaseModel): decision:Literal["accepted","rejected"]; reason:str=Field(default="",max_length=500)
+class SupplierIn(BaseModel): name:str=Field(min_length=1,max_length=120); lead_days:int=Field(default=0,ge=0,le=365); minimum_order_kg:float=Field(default=0,ge=0)
+class RecipeIn(BaseModel): name:str=Field(min_length=1,max_length=120); yield_servings:float=Field(gt=0)
+class RecipeIngredientIn(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0)
+class StockEventIn(BaseModel): quantity_kg:float=Field(gt=0); occurred_on:date; note:str=Field(default="",max_length=250); reason:str=Field(default="",max_length=120)
 class RiskSimulationIn(BaseModel):
     batches:list[BatchInput]; demand:list[Demand]; as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42
 class PurchaseOptimizeIn(BaseModel):
@@ -87,6 +101,34 @@ def create_batch(data:BatchCreate,db:Session=Depends(db_session)):
     if data.use_by<data.received_on: raise HTTPException(422,"Use-by date cannot precede received date")
     if not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Ingredient not found")
     x=BatchDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.get("/suppliers")
+def suppliers(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"lead_days":x.lead_days,"minimum_order_kg":x.minimum_order_kg} for x in db.scalars(select(SupplierDB).order_by(SupplierDB.name))]
+@app.post("/suppliers",status_code=201)
+def create_supplier(data:SupplierIn,db:Session=Depends(db_session)):
+    if db.scalar(select(SupplierDB).where(SupplierDB.name==data.name.strip())): raise HTTPException(409,"Supplier already exists")
+    x=SupplierDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.post("/recipes",status_code=201)
+def create_recipe(data:RecipeIn,db:Session=Depends(db_session)):
+    if db.scalar(select(RecipeDB).where(RecipeDB.name==data.name.strip())): raise HTTPException(409,"Recipe already exists")
+    x=RecipeDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+@app.post("/recipes/{recipe_id}/ingredients",status_code=201)
+def add_recipe_ingredient(recipe_id:str,data:RecipeIngredientIn,db:Session=Depends(db_session)):
+    if not db.get(RecipeDB,recipe_id) or not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Recipe or ingredient not found")
+    x=RecipeIngredientDB(recipe_id=recipe_id,**data.model_dump());db.add(x);db.commit();return {"id":x.id,"recipe_id":recipe_id,**data.model_dump()}
+def record_stock_event(batch_id:str,data:StockEventIn,event_type:str,db:Session):
+    batch=db.get(BatchDB,batch_id)
+    if not batch: raise HTTPException(404,"Batch not found")
+    if event_type=="consumption":
+        if batch.quantity_kg<data.quantity_kg: raise HTTPException(409,"Insufficient stock; negative inventory prevented")
+        batch.quantity_kg-=data.quantity_kg;x=ConsumptionEventDB(id=str(uuid4()),batch_id=batch_id,quantity_kg=data.quantity_kg,occurred_on=data.occurred_on,note=data.note)
+    else:
+        if batch.quantity_kg<data.quantity_kg: raise HTTPException(409,"Waste exceeds available stock")
+        batch.quantity_kg-=data.quantity_kg;x=WasteEventDB(id=str(uuid4()),batch_id=batch_id,quantity_kg=data.quantity_kg,occurred_on=data.occurred_on,reason=data.reason or "unspecified")
+    db.add(x);db.add(AuditEventDB(event_type=event_type,detail=f"{batch_id}: {data.quantity_kg} kg"));db.commit();return {"batch_id":batch_id,"remaining_kg":batch.quantity_kg,"event_id":x.id}
+@app.post("/batches/{batch_id}/consume")
+def consume(batch_id:str,data:StockEventIn,db:Session=Depends(db_session)): return record_stock_event(batch_id,data,"consumption",db)
+@app.post("/batches/{batch_id}/waste")
+def waste(batch_id:str,data:StockEventIn,db:Session=Depends(db_session)): return record_stock_event(batch_id,data,"waste",db)
 @app.post("/sales",status_code=201)
 def create_sale(data:SaleIn,db:Session=Depends(db_session)):
     x=DailySaleDB(**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
