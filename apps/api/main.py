@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase
 
 engine = create_engine("sqlite:///./ghostwaste.db", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -38,6 +39,10 @@ class IngredientIn(BaseModel): name:str=Field(min_length=1,max_length=120); unit
 class BatchCreate(BaseModel): ingredient_id:str; quantity_kg:float=Field(gt=0); unit_cost:float=Field(ge=0); received_on:date; use_by:date
 class SaleIn(BaseModel): menu_item:str=Field(min_length=1); sold_on:date; quantity:float=Field(ge=0)
 class DecisionIn(BaseModel): decision:Literal["accepted","rejected"]; reason:str=Field(default="",max_length=500)
+class RiskSimulationIn(BaseModel):
+    batches:list[BatchInput]; demand:list[Demand]; as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42
+class PurchaseOptimizeIn(BaseModel):
+    available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); min_order_kg:float=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,gt=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
 def db_session():
     db=SessionLocal()
     try: yield db
@@ -61,6 +66,14 @@ def setup(): Base.metadata.create_all(engine)
 def health(): return {"status":"ok","version":"0.2.0","storage":"local SQLite"}
 @app.post("/scenario",response_model=Result)
 def scenario(s:Scenario): return fefo_risk(s)
+@app.post("/risk/simulate")
+def simulate_risk(data:RiskSimulationIn):
+    result=monte_carlo_risk([SimBatch(b.id,b.ingredient,b.quantity_kg,(b.use_by-data.as_of).days,b.unit_cost) for b in data.batches],{d.ingredient:d.expected_daily_kg for d in data.demand},data.horizon_days,data.trials,data.seed)
+    return {"provenance":"synthetic_scenario","result":result.__dict__,"explanation":"Monte Carlo FEFO simulation with seeded demand uncertainty. Expired batches are never allocated."}
+@app.post("/optimization/purchase")
+def optimize(data:PurchaseOptimizeIn):
+    try: return {"provenance":"synthetic_scenario","result":optimize_purchase(**data.model_dump())}
+    except ValueError as e: raise HTTPException(422,str(e))
 @app.get("/ingredients")
 def ingredients(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"unit":x.unit,"storage_category":x.storage_category} for x in db.scalars(select(IngredientDB).order_by(IngredientDB.name))]
 @app.post("/ingredients",status_code=201)

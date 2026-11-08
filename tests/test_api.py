@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from uuid import uuid4
 from apps.api.main import app
 
 client = TestClient(app)
@@ -39,11 +40,12 @@ def test_expired_batch_is_never_allocated():
 
 def test_inventory_and_forecast_workflow(tmp_path, monkeypatch):
     # API contracts are exercised against the test application's local SQLite setup.
-    ingredient=client.post('/ingredients',json={'name':'Test herb','storage_category':'chilled'}).json()
+    ingredient=client.post('/ingredients',json={'name':f'Test herb {uuid4()}','storage_category':'chilled'}).json()
     batch=client.post('/batches',json={'ingredient_id':ingredient['id'],'quantity_kg':2,'unit_cost':3,'received_on':'2026-11-08','use_by':'2026-11-10'})
     assert batch.status_code == 201
+    menu_item=f'salad-{uuid4()}'
     for day, qty in [('2026-11-01',10),('2026-11-02',12),('2026-11-03',11)]:
-        assert client.post('/sales',json={'menu_item':'salad','sold_on':day,'quantity':qty}).status_code == 201
-    forecast=client.get('/forecast/salad').json()
+        assert client.post('/sales',json={'menu_item':menu_item,'sold_on':day,'quantity':qty}).status_code == 201
+    forecast=client.get(f'/forecast/{menu_item}').json()
     assert forecast['model'] == 'moving_average_7_or_less'
     assert forecast['predictions'][0]['quantity'] == 11
