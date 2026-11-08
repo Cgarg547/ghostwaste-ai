@@ -42,6 +42,8 @@ class ForecastRunDB(Base):
     __tablename__="forecast_runs"; id:Mapped[str]=mapped_column(String,primary_key=True); menu_item:Mapped[str]=mapped_column(String,index=True); model:Mapped[str]=mapped_column(String); metrics_json:Mapped[str]=mapped_column(String); predictions_json:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class ForecastPredictionDB(Base):
     __tablename__="forecast_predictions"; id:Mapped[int]=mapped_column(Integer,primary_key=True); forecast_run_id:Mapped[str]=mapped_column(ForeignKey("forecast_runs.id"),index=True); predicted_for:Mapped[date]=mapped_column(Date,index=True); quantity:Mapped[float]=mapped_column(Float); low:Mapped[float]=mapped_column(Float); high:Mapped[float]=mapped_column(Float)
+class RiskScenarioDB(Base):
+    __tablename__="risk_scenarios"; id:Mapped[str]=mapped_column(String,primary_key=True); forecast_run_id:Mapped[str]=mapped_column(ForeignKey("forecast_runs.id"),index=True); seed:Mapped[int]=mapped_column(Integer); inputs_json:Mapped[str]=mapped_column(String); outputs_json:Mapped[str]=mapped_column(String); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 
 class BatchInput(BaseModel):
     id:str; ingredient:str=Field(min_length=1,max_length=120); quantity_kg:float=Field(ge=0); use_by:date; unit_cost:float=Field(ge=0); received_on:date|None=None
@@ -71,6 +73,7 @@ class PurchaseOptimizeIn(BaseModel):
 class MultiPlanItem(BaseModel): ingredient:str; available_kg:float=Field(ge=0); demand_kg:float=Field(ge=0); unit_cost:float=Field(ge=0); lead_days:int=Field(default=0,ge=0); max_order_kg:float=Field(default=1000,ge=0); shortage_penalty:float=Field(default=20,ge=0); waste_penalty:float=Field(default=2,ge=0)
 class MultiOptimizeIn(BaseModel): items:list[MultiPlanItem]=Field(min_length=1,max_length=100); horizon_days:int=Field(default=7,ge=1,le=90); storage_capacity_kg:float=Field(ge=0)
 class ForecastRunIn(BaseModel): horizon:int=Field(default=7,ge=1,le=30); initial_train:int=Field(default=7,ge=3,le=365)
+class WorkflowIn(BaseModel): as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); seed:int=42; storage_capacity_kg:float=Field(default=1000,ge=0)
 def db_session():
     db=SessionLocal()
     try: yield db
@@ -229,6 +232,40 @@ def ingredient_demand(run_id:str,db:Session=Depends(db_session)):
         ingredient=db.get(IngredientDB,row.ingredient_id)
         demands.append({"ingredient":ingredient.name,"required_kg":round(servings/recipe.yield_servings*row.quantity_kg,4)})
     return {"forecast_run_id":run_id,"recipe":recipe.name,"forecast_servings":servings,"ingredient_demand":demands,"provenance":"forecast_plus_recipe","assumptions":["Recipe name equals menu item", "Recipe yield is fixed", "All ingredient quantities are canonical kilograms"]}
+def recipe_workflow(run_id:str,data:WorkflowIn,db:Session):
+    run=db.get(ForecastRunDB,run_id)
+    if not run: raise HTTPException(404,"Forecast run not found")
+    recipe=db.scalar(select(RecipeDB).where(RecipeDB.name==run.menu_item))
+    if not recipe: raise HTTPException(404,"No recipe named for this menu item")
+    servings=sum(x["quantity"] for x in json.loads(run.predictions_json)); requirements={}
+    for ri in db.scalars(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe.id)):
+        ingredient=db.get(IngredientDB,ri.ingredient_id);requirements[ingredient.name]=servings/recipe.yield_servings*ri.quantity_kg
+    inventory=list(db.scalars(select(BatchDB).join(BatchDB.ingredient)))
+    batches=[BatchInput(id=b.id,ingredient=b.ingredient.name,quantity_kg=b.quantity_kg,use_by=b.use_by,unit_cost=b.unit_cost,received_on=b.received_on) for b in inventory]
+    # Aggregate horizon demand into daily rate for expiry-safe FEFO allocation.
+    scenario=Scenario(batches=batches,demand=[Demand(ingredient=k,expected_daily_kg=v/data.horizon_days) for k,v in requirements.items()],as_of=data.as_of)
+    risk=fefo_risk(scenario)
+    items=[]
+    for ingredient,demand_kg in requirements.items():
+        relevant=[b for b in inventory if b.ingredient.name==ingredient and b.use_by>=data.as_of]
+        available=sum(b.quantity_kg for b in relevant);cost=(sum(b.quantity_kg*b.unit_cost for b in relevant)/available) if available else 0
+        items.append({"ingredient":ingredient,"available_kg":available,"demand_kg":demand_kg,"unit_cost":cost,"lead_days":0,"max_order_kg":1000})
+    plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg) if items else {"status":"infeasible","items":[]}
+    output={"risk":risk.model_dump(),"optimization":plan,"requirements_kg":requirements,"provenance":"simulated_forecast_recipe_inventory","warning":"Simulated planning output; no purchase or food-safety action is executed."}
+    record=RiskScenarioDB(id=str(uuid4()),forecast_run_id=run_id,seed=data.seed,inputs_json=json.dumps({"as_of":str(data.as_of),"horizon_days":data.horizon_days}),outputs_json=json.dumps(output));db.add(record)
+    recommendations=[]
+    for row in plan.get("items",[]):
+        if row["order_kg"]>0 or row["shortage_kg"]>0:
+            r=RecommendationDB(id=str(uuid4()),title=f"Review {row['ingredient']}: order {row['order_kg']} kg; shortage {row['shortage_kg']} kg",estimated_kg=row["order_kg"]);db.add(r);recommendations.append({"id":r.id,"title":r.title,"status":"pending"})
+    db.add(AuditEventDB(event_type="workflow_simulated",detail=f"forecast {run_id}, scenario {record.id}"));db.commit()
+    return {"scenario_id":record.id,"forecast_run_id":run_id,"recipe":recipe.name,"result":output,"recommendations":recommendations}
+@app.post("/workflows/forecast/{run_id}")
+def run_workflow(run_id:str,data:WorkflowIn,db:Session=Depends(db_session)): return recipe_workflow(run_id,data,db)
+@app.get("/risk-scenarios/{scenario_id}")
+def risk_scenario(scenario_id:str,db:Session=Depends(db_session)):
+    x=db.get(RiskScenarioDB,scenario_id)
+    if not x: raise HTTPException(404,"Risk scenario not found")
+    return {"id":x.id,"forecast_run_id":x.forecast_run_id,"seed":x.seed,"inputs":json.loads(x.inputs_json),"outputs":json.loads(x.outputs_json),"provenance":"simulated_forecast_recipe_inventory"}
 @app.post("/recommendations/from-scenario")
 def recommend(s:Scenario,db:Session=Depends(db_session)):
     result=fefo_risk(s); items=[]

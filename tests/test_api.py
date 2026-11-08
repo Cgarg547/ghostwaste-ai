@@ -70,6 +70,17 @@ def test_forecast_can_translate_to_recipe_ingredient_demand():
     demand=client.get(f"/forecasts/{run['id']}/ingredient-demand").json()
     assert demand['ingredient_demand'][0]['required_kg']==1
 
+def test_forecast_recipe_workflow_persists_simulated_risk_and_recommendations():
+    suffix=str(uuid4()); menu=f'wf-{suffix}'
+    ingredient=client.post('/ingredients',json={'name':f'wf-ing-{suffix}','storage_category':'chilled'}).json()
+    recipe=client.post('/recipes',json={'name':menu,'yield_servings':1}).json();client.post(f"/recipes/{recipe['id']}/ingredients",json={'ingredient_id':ingredient['id'],'quantity_kg':1})
+    client.post('/batches',json={'ingredient_id':ingredient['id'],'quantity_kg':1,'unit_cost':3,'received_on':'2026-09-01','use_by':'2026-10-12'})
+    for day in range(1,9): client.post('/sales',json={'menu_item':menu,'sold_on':f'2026-09-{day:02d}','quantity':2})
+    run=client.post(f'/forecasts/{menu}',json={'horizon':2,'initial_train':4}).json()
+    workflow=client.post(f"/workflows/forecast/{run['id']}",json={'as_of':'2026-10-10','horizon_days':2,'seed':7,'storage_capacity_kg':10}).json()
+    assert workflow['result']['provenance']=='simulated_forecast_recipe_inventory'
+    assert client.get(f"/risk-scenarios/{workflow['scenario_id']}").status_code==200
+
 def test_supplier_recipe_and_stock_events_preserve_integrity():
     suffix=str(uuid4())
     ingredient=client.post('/ingredients',json={'name':f'carrot-{suffix}','storage_category':'chilled'}).json()
