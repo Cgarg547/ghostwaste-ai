@@ -271,6 +271,21 @@ test('intelligence workspaces calculate locally and preserve browser task state'
     diagnostics.getByText('Average unmet demand per trial').first()
   ).toBeVisible();
 
+  // Verify read-only purchasing recommendations.
+  const purchasing = page.getByRole('region', {
+    name: 'Purchasing recommendations',
+  });
+  await expect(purchasing).toBeVisible();
+  await expect(
+    purchasing.getByRole('heading', { name: 'Purchasing recommendations' })
+  ).toBeVisible();
+  await expect(
+    purchasing.getByText(/Manager review is required/)
+  ).toBeVisible();
+  await expect(
+    purchasing.getByText(/no purchase order is created/)
+  ).toBeVisible();
+
   await gotoSection(page, 'Use-First Planner');
   await expect(page.getByText('Smart Use-First Planner')).toBeVisible();
   await gotoSection(page, 'Impact Studio');

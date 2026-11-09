@@ -169,6 +169,38 @@ def studio_calculation(data:StudioIn, db:Session)->dict:
         if supplier and link:
             items.append({"ingredient":ingredient,"supplier":supplier.name,"available_kg":available,"demand_kg":total_demand*data.demand_multiplier,"unit_cost":link.purchase_unit_cost,"lead_days":supplier.lead_days+data.lead_time_days_delta,"min_order_kg":supplier.minimum_order_kg,"max_order_kg":1000*data.planned_purchase_multiplier})
     plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[],"warning":"No forecast-linked recipe with priced supplier inputs was available."}
+    shortage_by_name = {
+        row["ingredient"]: row
+        for row in simulation.get("ingredient_shortages", [])
+    }
+    actions = []
+    for row in plan.get("items", []):
+        shortage = shortage_by_name.get(row["ingredient"], {})
+        order_kg = row["order_kg"]
+        blocked = row["lead_time_blocks_order"]
+        remaining_kg = row["shortage_kg"]
+        if blocked:
+            explanation = "Supplier lead time exceeds the planning horizon; review alternative supply or adjust the plan."
+        elif order_kg > 0 and remaining_kg > 0:
+            explanation = "Consider the suggested purchase, but modeled demand still exceeds available supply under the optimizer constraints."
+        elif order_kg > 0:
+            explanation = "Review the suggested purchase quantity against supplier terms, expiry dates, and actual inventory before approval."
+        elif remaining_kg > 0:
+            explanation = "No purchase was selected despite remaining shortage; review supplier constraints and the planning assumptions."
+        else:
+            explanation = "No additional purchase is suggested under the current planning assumptions."
+        actions.append({
+            "ingredient": row["ingredient"],
+            "supplier": row["supplier"],
+            "recommended_order_kg": order_kg,
+            "expected_remaining_shortage_kg": remaining_kg,
+            "shortage_probability": shortage.get("shortage_probability"),
+            "expected_unmet_demand_kg": shortage.get("expected_unmet_demand_kg"),
+            "lead_time_blocks_order": blocked,
+            "explanation": explanation,
+        })
+    plan["suggested_actions"] = actions
+    plan["action_notice"] = "Read-only planning suggestions. Purchase quantities are not included in Monte Carlo shortage probabilities. Manager review required; no order is created."
     return {"scenario_id":f"ephemeral-{data.seed}-{data.as_of.isoformat()}","persistent":False,"provenance":"synthetic_ephemeral_what_if","as_of":str(data.as_of),"horizon_days":data.horizon_days,"seed":data.seed,"inputs":data.model_dump(mode="json"),"requirements_kg":requirements,"risk":risk.model_dump(),"monte_carlo":simulation,"optimization":plan,"assumptions":["Read-only calculation; no scenario, recommendation, purchase, or inventory record was created.","Shelf-life adjustment is a planning assumption, not food-safety advice.","Synthetic results are model outputs, not observed savings."]}
 
 app=FastAPI(title="GhostWaste API",version="0.3.0",docs_url="/docs" if os.environ.get("GHOSTWASTE_ENABLE_DOCS","true").lower()=="true" else None)
