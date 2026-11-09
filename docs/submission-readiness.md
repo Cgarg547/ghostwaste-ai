@@ -13,6 +13,7 @@
 | P1 | Theme Track measurement paragraph | PASS (draft) | Included in `submission-draft.md`; claims only proposed measurement. |
 | P1 | Official rules verification | PASS | Official Devpost rules checked 2026-11-09: deadline Dec 20, 2026, 9:00 PM PST; team 1–4; students age 13+; one track; repo, video, written description required. Recheck before submission. |
 | P1 | Public deployment | FAIL | Do not expose mutable local SQLite APIs without owner-approved auth, durable storage, backups, and review. |
+| P1 | Vercel judge demo | PASS (local verification) | Browser-local production test: 1 passed. Legacy isolated Playwright regression: 8 passed after restoring the local selected-forecast header state. No public deployment occurred. |
 | P2 | Screenshots | PARTIAL | Browser harness can capture evidence; curated screenshots remain pending. |
 
 ## Final commands

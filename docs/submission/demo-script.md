@@ -7,6 +7,8 @@
 5. **1:50–2:20 — Human control.** Show Optimization and Action Center. A manager can review/approve/reject locally; no order is sent.
 6. **2:20–2:45 — Intelligence and limitations.** Ask GhostWaste Intelligence why a batch is at risk. Close with local-first, synthetic data, no food-safety claims, and the need for an authenticated pilot.
 
+For the Vercel public-demo build, say “browser-local synthetic demo” instead of “persisted local run.” Scenario Studio and Impact Studio use labeled precomputed synthetic examples; Action Center approval is browser-local simulation and resets with the demo.
+
 Suggested screenshots: Overview, Forecasting, Waste Radar/Use-First, Impact Studio, and Action Center with the synthetic/local labels visible.
 
 ## Recording checklist

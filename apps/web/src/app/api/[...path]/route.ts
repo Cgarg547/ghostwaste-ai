@@ -2,8 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic='force-dynamic';
 const permitted=['content-type','accept'];
+const publicDemo=process.env.GHOSTWASTE_PUBLIC_DEMO==='true';
+
+function publicDemoResponse(method:string){
+  // This guard is intentionally server-side. It prevents a public Next.js
+  // deployment from ever proxying a visitor request to a configured backend.
+  // A browser-visible flag or disabled button alone would not provide that
+  // boundary. A stateless public dataset must be added before enabling it.
+  const status=method==='GET'||method==='HEAD'?503:403;
+  return NextResponse.json({detail:method==='GET'||method==='HEAD'?'Public demo data is not configured for this deployment.':'Public demo mode does not accept persistent changes.'},{status,headers:{'Cache-Control':'no-store'}});
+}
 
 async function proxy(request:NextRequest,{params}:{params:Promise<{path:string[]}>}) {
+  if(publicDemo)return publicDemoResponse(request.method);
   const {path}=await params;
   const origin=(process.env.BACKEND_ORIGIN||'http://127.0.0.1:8000').replace(/\/$/,'');
   const internalToken=process.env.API_INTERNAL_TOKEN||process.env.GHOSTWASTE_API_TOKEN||'';
