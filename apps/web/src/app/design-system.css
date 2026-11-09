@@ -382,6 +382,18 @@ tbody tr:last-child td { border-bottom:0; }
   .overview-hero::before,.hero-art img { animation:none!important; }
 }
 
+/* Supplier Intelligence: saved links only; comparison controls collapse for touch screens. */
+.supplier-hero { background:linear-gradient(110deg,#eef7ed,#fff 62%,#f5f0df); }
+.supplier-controls { display:grid; grid-template-columns:minmax(230px,1fr) minmax(260px,1fr); gap:18px; align-items:end; }
+.horizon-field { display:grid; grid-template-columns:1fr auto; gap:7px; color:#435d4c; font-size:10px; font-weight:800; }
+.horizon-field output { color:#214d36; font-variant-numeric:tabular-nums; }
+.horizon-field input { grid-column:1/-1; padding:0; accent-color:#2f7954; }
+.horizon-field span { color:#728176; font-size:9px; }.horizon-field span:last-child { text-align:right; }
+.supplier-recommendation { display:grid; gap:5px; padding:13px 15px; border-left:4px solid #78a95b; border-radius:0 11px 11px 0; background:#f1f8ed; color:#3c5d43; font-size:12px; line-height:1.55; }
+.supplier-recommendation.warning { border-left-color:#d89148; background:#fff7e9; color:#78551f; }
+.supplier-recommendation b { color:#244936; }.supplier-recommendation.warning b { color:#805611; }
+@media(max-width:600px) { .supplier-controls { grid-template-columns:1fr; } }
+
 /* Forecast interpretation stays readable on compact screens and chart points retain
    a visible keyboard focus indicator inside the SVG. */
 .forecast-note { display:grid; gap:4px; margin:14px 0 0; padding:11px 13px; border-left:3px solid #8cbd4c; border-radius:0 10px 10px 0; background:#f1f8e9; color:#405642; font-size:12px; }

@@ -163,7 +163,7 @@ test('rapid switching keeps forecast chart, metrics and linked scenario aligned'
   expect((await (await request.get(`/api/risk-scenarios/${runB.scenarioId}`)).json()).forecast_run_id).toBe(runB.run.id);
 });
 
-test('all 13 routes fit exact desktop, tablet and mobile widths with reduced motion', async ({ page }) => {
+test('all 14 routes fit exact desktop, tablet and mobile widths with reduced motion', async ({ page }) => {
   test.setTimeout(90_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const evidence = process.env.GHOSTWASTE_E2E_EVIDENCE_DIR;
@@ -171,7 +171,7 @@ test('all 13 routes fit exact desktop, tablet and mobile widths with reduced mot
   const widths=(process.env.GHOSTWASTE_E2E_WIDTHS || '390,768,1024,1280,1440,1600').split(',').map(Number);
   for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
-    for (const route of ['/', '/inventory', '/forecasting', '/waste-radar', '/optimization', '/actions', '/analytics', '/settings', '/assistant', '/scenario-studio', '/impact-studio', '/use-first', '/daily-plan']) {
+    for (const route of ['/', '/inventory', '/forecasting', '/waste-radar', '/optimization', '/supplier-intelligence', '/actions', '/analytics', '/settings', '/assistant', '/scenario-studio', '/impact-studio', '/use-first', '/daily-plan']) {
       await page.goto(route);
       await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
       const overflow = await page.evaluate(() => ({ body: document.body.scrollWidth, viewport: window.innerWidth }));
@@ -300,4 +300,44 @@ test('daily action plan degrades safely when browser storage is blocked', async 
   await page.addInitScript(() => Object.defineProperty(window, 'localStorage', { configurable: true, get: () => { throw new DOMException('blocked', 'SecurityError'); } }));
   await page.goto('/daily-plan');
   await expect(page.getByText('Browser storage is unavailable; task checks will not survive refresh.')).toBeVisible();
+});
+
+test('Supplier Intelligence ranks explicit supplier links and explains horizon trade-offs', async ({ page, request }) => {
+  const suffix = token();
+  const ingredient = await apiPost(request, '/ingredients', { name: `Supplier comparison ${suffix}`, storage_category: 'chilled' });
+  const fast = await apiPost(request, '/suppliers', { name: `Fast ${suffix}`, lead_days: 2, minimum_order_kg: 4 });
+  const cheap = await apiPost(request, '/suppliers', { name: `Cheap ${suffix}`, lead_days: 4, minimum_order_kg: 12 });
+  const late = await apiPost(request, '/suppliers', { name: `Late ${suffix}`, lead_days: 12, minimum_order_kg: 1 });
+  await apiPost(request, `/suppliers/${fast.id}/ingredients`, { ingredient_id: ingredient.id, purchase_unit_cost: 5.25 });
+  await apiPost(request, `/suppliers/${cheap.id}/ingredients`, { ingredient_id: ingredient.id, purchase_unit_cost: 3.5 });
+  await apiPost(request, `/suppliers/${late.id}/ingredients`, { ingredient_id: ingredient.id, purchase_unit_cost: 1.5 });
+  await page.goto('/supplier-intelligence');
+  await page.getByRole('combobox', { name: 'Ingredient for supplier comparison' }).selectOption(ingredient.id);
+  await expect(page.getByText('Lowest priced eligible supplier')).toBeVisible();
+  await expect(page.getByText(new RegExp(`Cheap ${suffix} is the cheapest priced supplier`))).toBeVisible();
+  const rows = page.locator('tbody tr');
+  await expect(rows.nth(0)).toContainText(`Cheap ${suffix}`);
+  await expect(rows.nth(1)).toContainText(`Fast ${suffix}`);
+  await expect(rows.nth(2)).toContainText(`Late ${suffix}`);
+  await expect(rows.nth(2)).toContainText('5 days late');
+});
+
+test('Supplier Intelligence warns when links are late and exposes missing link or price data', async ({ page, request }) => {
+  const suffix = token();
+  const lateIngredient = await apiPost(request, '/ingredients', { name: `Late ingredient ${suffix}`, storage_category: 'ambient' });
+  const missingIngredient = await apiPost(request, '/ingredients', { name: `Missing ingredient ${suffix}`, storage_category: 'ambient' });
+  const priceIngredient = await apiPost(request, '/ingredients', { name: `Unpriced ingredient ${suffix}`, storage_category: 'ambient' });
+  const lateSupplier = await apiPost(request, '/suppliers', { name: `Slow ${suffix}`, lead_days: 30, minimum_order_kg: 2 });
+  const unpricedSupplier = await apiPost(request, '/suppliers', { name: `Unpriced ${suffix}`, lead_days: 1, minimum_order_kg: 2 });
+  await apiPost(request, `/suppliers/${lateSupplier.id}/ingredients`, { ingredient_id: lateIngredient.id, purchase_unit_cost: 2 });
+  await apiPost(request, `/suppliers/${unpricedSupplier.id}/ingredients`, { ingredient_id: priceIngredient.id, purchase_unit_cost: null });
+  await page.goto('/supplier-intelligence');
+  const selector = page.getByRole('combobox', { name: 'Ingredient for supplier comparison' });
+  await selector.selectOption(lateIngredient.id);
+  await expect(page.locator('.supplier-recommendation[role="alert"]')).toContainText('No supplier meets the 7-day horizon');
+  await selector.selectOption(missingIngredient.id);
+  await expect(page.getByText('No linked supplier records')).toBeVisible();
+  await selector.selectOption(priceIngredient.id);
+  await expect(page.getByText('Price missing')).toBeVisible();
+  await expect(page.getByText('Price-based selection is unavailable.')).toBeVisible();
 });

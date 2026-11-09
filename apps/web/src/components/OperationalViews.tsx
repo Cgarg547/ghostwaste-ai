@@ -38,6 +38,7 @@ export function NavIcon({ index }: { index: number }) {
     <><path d="M4 18V6m0 12h16"/><path d="m6 15 4-4 3 2 6-7"/><path d="M16 6h3v3"/></>,
     <><path d="M12 3 4.5 6v5c0 4.7 3.1 8 7.5 10 4.4-2 7.5-5.3 7.5-10V6L12 3Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></>,
     <><path d="M4 19V5m0 14h16"/><path d="M7 16l4-5 3 2 5-7"/></>,
+    <><path d="M4 7h10v10H4z"/><path d="M14 10h3l3 3v4h-6zM7 17v2m9-2v2"/><circle cx="7" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/></>,
     <><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/><circle cx="12" cy="12" r="5"/><path d="m10 12 1.4 1.4L14.5 10"/></>,
     <><path d="M4 19V5m0 14h16"/><path d="M7 15h3V9H7zm6 0h3V5h-3zm6 0h2v-4h-2z"/></>,
     <><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.3 1-1.4 2.4-1.6-.6a7.6 7.6 0 0 1-1.4.8l-.3 1.7h-2.8l-.3-1.7a7.6 7.6 0 0 1-1.4-.8l-1.6.6-1.4-2.4 1.3-1a7.2 7.2 0 0 1 0-1.7l-1.3-1 1.4-2.4 1.6.6a7.6 7.6 0 0 1 1.4-.8l.3-1.7h2.8l.3 1.7a7.6 7.6 0 0 1 1.4.8l1.6-.6 1.4 2.4-1.3 1a7.2 7.2 0 0 1-.1 1.6Z"/></>,
@@ -217,6 +218,24 @@ export function OptimizationWorkspace({ scenario, output, forecastId, onRun }: a
         <p className="disclaimer">{plan.warning || output.warning || 'Planning estimates require manager approval. No purchase or payment is made.'}</p>
       </DataPanel>
     </> : <EmptyState title="No optimization scenario selected" description="Run or restore a scenario linked to the selected persisted forecast to compare constrained plans."/>}
+  </div>;
+}
+
+export function SupplierIntelligenceWorkspace({ ingredients, suppliers }: { ingredients: any[]; suppliers: any[] }) {
+  const [ingredientId, setIngredientId] = useState('');
+  const [horizon, setHorizon] = useState(7);
+  const selected = ingredients.find((ingredient: any) => ingredient.id === ingredientId);
+  const linked = selected ? suppliers.flatMap((supplier: any) => (supplier.ingredients || []).filter((link: any) => link.ingredient_id === selected.id).map((link: any) => ({ ...supplier, price: link.purchase_unit_cost }))) : [];
+  const ranked = [...linked].sort((a, b) => { const aOnTime = Number(a.lead_days) <= horizon, bOnTime = Number(b.lead_days) <= horizon; if (aOnTime !== bOnTime) return aOnTime ? -1 : 1; const aPriced = a.price != null, bPriced = b.price != null; if (aPriced !== bPriced) return aPriced ? -1 : 1; if (aPriced && Number(a.price) !== Number(b.price)) return Number(a.price) - Number(b.price); return String(a.name).localeCompare(String(b.name)); });
+  const onTime = ranked.filter(item => Number(item.lead_days) <= horizon);
+  const cheapest = onTime.filter(item => item.price != null)[0];
+  const allLate = linked.length > 0 && onTime.length === 0;
+  const recommendation = !selected ? 'Select an ingredient to compare only its explicitly linked supplier records.' : !linked.length ? `No supplier records are explicitly linked to ${selected.name}. Add a supplier ingredient link in Data & settings to compare it here.` : allLate ? `No supplier meets the ${horizon}-day horizon. The listed suppliers are late, so this view cannot recommend an on-time delivery.` : cheapest ? `${cheapest.name} is the cheapest priced supplier that can deliver within ${horizon} days at $${fmt(cheapest.price, 2)} per kg. Compare its ${fmt(cheapest.minimum_order_kg)} kg minimum with your required quantity before deciding.` : `One or more suppliers can deliver within ${horizon} days, but none has a recorded purchase price. Price-based selection is unavailable.`;
+  return <div className="route-stack supplier-intelligence">
+    <section className="route-hero supplier-hero"><div><p className="eyebrow">EXPLICIT SUPPLIER LINKS · PLANNING ONLY</p><h2>Compare supply options without creating an order.</h2><p>Rankings use only saved lead times, minimums, and linked purchase prices. GhostWaste does not infer supplier performance or contact anyone.</p></div></section>
+    <DataPanel title="Comparison controls" description="Choose an ingredient and delivery window. The horizon changes delivery eligibility only."><div className="supplier-controls"><label className="select-field">Ingredient<select aria-label="Ingredient for supplier comparison" value={ingredientId} onChange={event => setIngredientId(event.target.value)}><option value="">Select ingredient</option>{ingredients.map((ingredient: any) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}</option>)}</select></label><label className="horizon-field">Planning horizon <output htmlFor="supplier-horizon">{horizon} days</output><input id="supplier-horizon" aria-label="Planning horizon in days" type="range" min="1" max="90" value={horizon} onChange={event => setHorizon(Number(event.target.value))}/><span>1 day</span><span>90 days</span></label></div>{!ingredients.length && <EmptyState title="No ingredients recorded" description="Create an ingredient before comparing supplier availability."/>}</DataPanel>
+    <DataPanel title="Recommendation" description="Explainable rule: suppliers within the horizon come first; among those with a recorded price, the lowest price is preferred."><div className={allLate ? 'supplier-recommendation warning' : 'supplier-recommendation'} role={allLate ? 'alert' : 'status'}><b>{allLate ? 'No supplier meets the horizon' : cheapest ? 'Lowest priced eligible supplier' : 'Planning context'}</b><span>{recommendation}</span></div></DataPanel>
+    <DataPanel title="Explicitly linked suppliers" description={selected ? `Every saved supplier link for ${selected.name}, ranked by delivery eligibility and then recorded price.` : 'Supplier links appear after an ingredient is selected.'}>{selected && !linked.length ? <EmptyState title="No linked supplier records" description="No suppliers are associated with this ingredient. GhostWaste will not assume availability from an unlinked supplier."/> : selected ? <ResponsiveDataTable headers={['Rank','Supplier','Purchase price / kg','Lead time','Minimum order','Delivery eligibility']} rows={ranked.map((supplier, index) => [String(index + 1), supplier.name, supplier.price == null ? 'Price missing' : `$${fmt(supplier.price, 2)}`, `${supplier.lead_days} days`, `${fmt(supplier.minimum_order_kg)} kg`, <StatusBadge key={supplier.id} tone={Number(supplier.lead_days) <= horizon ? 'success' : 'warning'}>{Number(supplier.lead_days) <= horizon ? 'Within horizon' : `${Number(supplier.lead_days) - horizon} days late`}</StatusBadge>])}/> : <EmptyState title="Select an ingredient" description="The comparison intentionally shows only suppliers explicitly linked to the selected ingredient."/>}</DataPanel>
   </div>;
 }
 
