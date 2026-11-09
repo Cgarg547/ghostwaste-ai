@@ -12,7 +12,12 @@ export GHOSTWASTE_E2E_EVIDENCE_DIR="$temp_root/screenshots"
 printf 'Isolated E2E database: %s\n' "$GHOSTWASTE_DB_PATH"
 printf 'Browser screenshots: %s\n' "$GHOSTWASTE_E2E_EVIDENCE_DIR"
 cd "$root/apps/web"
-npx playwright test "$@"
+if [ "$#" -eq 0 ]; then
+  # Public-demo coverage intentionally has its own production build and must
+  # never run against this local FastAPI/SQLite harness.
+  set -- e2e/ghostwaste.spec.ts
+fi
+npx playwright test --output="$temp_root/playwright-results" "$@"
 "$root/.venv/bin/python" - "$GHOSTWASTE_DB_PATH" <<'PY'
 import sqlite3, sys
 from pathlib import Path

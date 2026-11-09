@@ -4,6 +4,9 @@ const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 export default defineConfig({
   testDir: './e2e',
+  // Public-demo assertions require a different production build and its own
+  // `playwright.public-demo.config.ts`; never run them through local mode.
+  testIgnore: 'public-demo.spec.ts',
   fullyParallel: false,
   workers: 1,
   retries: 0,

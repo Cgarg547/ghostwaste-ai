@@ -1,6 +1,6 @@
 # Vercel deployment assessment — 2026-11-09
 
-## Verdict: FAIL for a single, fully functional, safe $0 Vercel deployment
+## Verdict: PARTIAL — the browser-local public demo is suitable; the persistent full stack is not
 
 GhostWaste is a Next.js frontend plus a FastAPI/SQLAlchemy/SQLite backend. The application needs persistent shared records for demo loading, inventory, sales, forecast runs, risk scenarios, approvals, and audit events. Its forecasting stack also includes NumPy, pandas, and OR-Tools.
 
@@ -23,7 +23,9 @@ Primary sources: [Python runtime](https://vercel.com/docs/functions/runtimes/pyt
 
 Do not add `vercel.json`, point `GHOSTWASTE_DB_PATH` at `/tmp`, or set `GHOSTWASTE_AUTO_SCHEMA=true` for a public Function. Those changes would make the app appear to work while losing/fragmenting shared state. Do not expose the existing mutable API with an embedded browser token: it would not provide visitor-level authorization.
 
-`GHOSTWASTE_PUBLIC_DEMO=true` is now a server-side fail-closed guard in the Next.js proxy. It blocks every write with `403` and does not proxy any request to `BACKEND_ORIGIN`. The client uses the bundled `src/lib/publicDemo.ts` synthetic fixture directly, so public-mode page interactions make no network API request. It includes deterministic forecast, FEFO, supplier, scenario/impact example, action-plan, and browser-local simulated approval data. Scenario Studio offers only clearly labeled precomputed synthetic variants; it does not claim to run OR-Tools in the browser.
+`GHOSTWASTE_PUBLIC_DEMO=true` is now a server-side fail-closed guard in the Next.js proxy. It blocks every write with `403`, returns `503` for reads, and does not proxy any request to `BACKEND_ORIGIN`. The client uses the bundled `src/lib/publicDemo.ts` synthetic fixture directly, so public-mode page interactions make no network API request. It includes deterministic forecast, FEFO, supplier, scenario/impact example, action-plan, and browser-local simulated approval data. Scenario Studio offers only clearly labeled precomputed synthetic variants; it does not claim to run OR-Tools in the browser.
+
+The public AI Assistant is deterministic and fixture-grounded, not a live LLM. It never calls FastAPI, `/api`, or an external provider. It explains bundled Romaine expiry/FEFO, inventory, forecast values, modeled-waste limitations, precomputed optimization, supplier trade-offs, and missing prices. Unsupported questions explicitly state that only fixed synthetic records are available. Approval state is browser-local; task checks use local storage and Reset Demo clears them.
 
 ## Public-demo build
 
@@ -56,7 +58,9 @@ cd apps/web
 npx playwright test -c playwright.public-demo.config.ts
 ```
 
-Latest result: **1 passed**. The harness builds and starts Next.js with both public-demo variables, verifies browser-local synthetic navigation/scenario/supplier/approval/reset behavior, confirms no frontend `/api` request, and checks direct public API `POST` is `403` while `GET` is `503`.
+Latest local result: **2 passed**. The harness builds and starts Next.js with both public-demo variables, verifies browser-local synthetic navigation, scenario, supplier, approval, reset, mobile navigation, and deterministic assistant behavior. It confirms no frontend `/api` request, checks direct public API `POST` is `403` while `GET` is `503`, and verifies assistant history is session-local and cleared by Reset Demo.
+
+Live audit on 2026-11-09: `https://ghostwaste-ai-web.vercel.app` returned HTTP 200 and rendered the public synthetic labels. Its direct `GET /api/ingredients` returned 503 and a rejected `POST /api/ingredients` returned 403. This is a read-only boundary check, not proof that unpublished local changes have reached Vercel.
 
 ## Environment reference (not a Vercel deployment recipe)
 

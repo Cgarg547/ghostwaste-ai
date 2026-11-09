@@ -82,7 +82,7 @@ The pytest fixture requires a unique temporary path and refuses the development 
 
 ## Submission material
 
-See [submission readiness](docs/submission-readiness.md), [judge walkthrough](docs/demo-script.md), [submission draft](docs/submission-draft.md), and [deployment notes](docs/deployment.md). Screenshots and a public video are intentionally pending until a human records and publishes them.
+See [submission readiness](docs/submission-readiness.md), [judge walkthrough](docs/submission/demo-script.md), [submission draft](docs/submission-draft.md), and [Vercel public-demo notes](docs/vercel-deployment.md). The public judge build is browser-local synthetic data; it has no FastAPI or SQLite dependency. Screenshots and a public video are intentionally pending until a human records and publishes them.
 # Intelligence & kitchen planning additions
 
 The local demo includes GhostWaste Intelligence (deterministic evidence answers), Scenario Studio (ephemeral seeded FEFO/Monte Carlo/CBC calculations), Use-First Planner, Impact Studio, and a Daily Kitchen Action Plan. Load demo data, select its forecast, then use the five new sidebar workspaces. These are planning aids only: simulated changes are not observed savings, and task ticks are browser-local planning state.

@@ -5,7 +5,7 @@
 3. **0:50–1:20 — Risk.** Open Waste Radar and Use-First Planner. Explain FEFO, the explicit use-by boundary and that expired stock is never recommended.
 4. **1:20–1:50 — Decision support.** Open Supplier Intelligence first: select an ingredient and explain on-time, price, lead-time, and minimum-order trade-offs. Then open Scenario Studio and Impact Studio. Change an assumption, run the seeded model, and point out results are modeled—not observed savings.
 5. **1:50–2:20 — Human control.** Show Optimization and Action Center. A manager can review/approve/reject locally; no order is sent.
-6. **2:20–2:45 — Intelligence and limitations.** Ask GhostWaste Intelligence why a batch is at risk. Close with local-first, synthetic data, no food-safety claims, and the need for an authenticated pilot.
+6. **2:20–2:45 — Intelligence and limitations.** Ask GhostWaste Intelligence why a batch is at risk. In the public demo, explain that it is a deterministic browser-local fixture assistant, not a live LLM, and Reset Demo clears its current-session conversation. Close with local-first, synthetic data, no food-safety claims, and the need for an authenticated pilot.
 
 For the Vercel public-demo build, say “browser-local synthetic demo” instead of “persisted local run.” Scenario Studio and Impact Studio use labeled precomputed synthetic examples; Action Center approval is browser-local simulation and resets with the demo.
 

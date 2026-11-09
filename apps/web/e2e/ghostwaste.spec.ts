@@ -249,10 +249,18 @@ test('keyboard focus exposes the same forecast point tooltip as pointer hover', 
 test('intelligence workspaces calculate locally and preserve browser task state', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Load demo data' }).click();
+  await page.getByRole('button', { name: 'Forecasting' }).click();
+  const forecastSelector = page.getByRole('combobox', { name: 'Select persisted forecast run' });
+  await expect.poll(() => forecastSelector.locator('option').count()).toBeGreaterThan(1);
+  const demoForecastId = await forecastSelector.locator('option').nth(1).getAttribute('value');
+  expect(demoForecastId).toBeTruthy();
+  await forecastSelector.selectOption(demoForecastId!);
+  await expect(forecastSelector).toHaveValue(demoForecastId!);
   await gotoSection(page, 'AI Assistant');
   await page.getByRole('button', { name: 'Which ingredients should I use first?' }).click();
   await expect(page.getByText('GhostWaste Intelligence').last()).toBeVisible();
   await gotoSection(page, 'Scenario Studio');
+  await expect(page.locator('main')).toContainText('Selected persisted forecast: Demo Garden Salad');
   await page.getByRole('button', { name: 'Run simulation' }).click();
   await expect(page.getByText(/EPHEMERAL/)).toBeVisible();
 
