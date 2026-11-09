@@ -1,6 +1,12 @@
-# GhostWaste AI — local synthetic demo
+# GhostWaste AI — restaurant food-waste planning demo
 
 GhostWaste is a local-only restaurant inventory planning demo. It stores data in SQLite, uses synthetic demo records, and creates approval-only recommendations. It never places orders, initiates payments, or contacts suppliers.
+
+It connects dated inventory, recorded sales, evaluated demand forecasts, FEFO expiry exposure, seeded simulation, constrained planning, and explicitly linked supplier intelligence. All impact values are synthetic/modelled—not customer outcomes, savings, or food-safety guidance.
+
+## Judge journey
+
+Load demo data, then follow: Inventory → Forecasting → Waste Radar → Optimization Lab → Supplier Intelligence → Scenario Studio → AI Assistant → Use-First Planner → Daily Action Plan → Action Center → Analytics. Supplier comparisons are read-only; approval writes only a local audit event.
 
 ## Requirements
 
@@ -58,6 +64,7 @@ python -m pytest tests -q
 cd apps/web && npx tsc --noEmit && npm run build
 cd ../.. && git diff --check && docker compose config
 ./scripts/e2e_local_demo.sh
+./scripts/run_browser_e2e_isolated.sh
 ```
 
 The pytest fixture requires a unique temporary path and refuses the development and Docker database locations. The E2E script starts a separate API and web server on loopback with a temporary SQLite file, then renders all eight browser routes in headless Chrome.
@@ -73,7 +80,9 @@ The pytest fixture requires a unique temporary path and refuses the development 
 - `alembic upgrade head` stops on a legacy duplicate daily sale: resolve that data deliberately before rerunning; the migration does not delete records automatically.
 - Browser E2E needs macOS Google Chrome at `/Applications/Google Chrome.app`; use the API/backend checks if it is unavailable and record browser verification as partial.
 
-See `docs/hackathon-readiness.md` for verified scope and remaining risks.
+## Submission material
+
+See [submission readiness](docs/submission-readiness.md), [judge walkthrough](docs/demo-script.md), [submission draft](docs/submission-draft.md), and [deployment notes](docs/deployment.md). Screenshots and a public video are intentionally pending until a human records and publishes them.
 # Intelligence & kitchen planning additions
 
 The local demo includes GhostWaste Intelligence (deterministic evidence answers), Scenario Studio (ephemeral seeded FEFO/Monte Carlo/CBC calculations), Use-First Planner, Impact Studio, and a Daily Kitchen Action Plan. Load demo data, select its forecast, then use the five new sidebar workspaces. These are planning aids only: simulated changes are not observed savings, and task ticks are browser-local planning state.

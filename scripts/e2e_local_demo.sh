@@ -43,11 +43,11 @@ rm -rf "$temp_root/web/.next"
 (cd "$temp_root/web" && BACKEND_ORIGIN="http://127.0.0.1:$api_port" npm run build && BACKEND_ORIGIN="http://127.0.0.1:$api_port" npm run start -- --hostname 127.0.0.1 --port "$web_port") >"$temp_root/web.log" 2>&1 & web_pid=$!
 for _ in {1..160}; do curl -fsS "http://127.0.0.1:$web_port" >/dev/null 2>&1 && break; sleep .25; done
 curl -fsS "http://127.0.0.1:$web_port" >/dev/null
-for route in / /inventory /forecasting /waste-radar /optimization /actions /analytics /settings; do
+for route in / /inventory /forecasting /waste-radar /optimization /supplier-intelligence /actions /analytics /settings /assistant /scenario-studio /impact-studio /use-first /daily-plan; do
   "$chrome" --headless --no-first-run --disable-gpu --dump-dom "http://127.0.0.1:$web_port$route" >"$temp_root/page.html" 2>"$temp_root/chrome.log"
   grep -q "GhostWaste" "$temp_root/page.html"
 done
 # A second independent page load is the browser-level refresh persistence check.
 "$chrome" --headless --no-first-run --disable-gpu --dump-dom "http://127.0.0.1:$web_port/analytics" >"$temp_root/refresh.html" 2>>"$temp_root/chrome.log"
 grep -q "GhostWaste" "$temp_root/refresh.html"
-echo "PASS: isolated API workflow and 8 browser routes rendered; persisted scenario restored after refresh."
+echo "PASS: isolated API workflow and 14 browser routes rendered; persisted scenario restored after refresh."

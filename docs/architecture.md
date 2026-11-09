@@ -29,6 +29,11 @@ flowchart LR
 5. The planner proposes quantities only for ingredients with an explicit supplier link and known price. It preserves unmet shortage when input data cannot support a purchase recommendation.
 6. Inputs and outputs are persisted together as a risk scenario. Equal run ID, inputs, and seed restore the same scenario rather than creating a duplicate.
 7. Recommendation records wait for an explicit final manager decision. A decision writes an audit event; it does not make a purchase, contact a supplier, or mutate stock.
+8. Supplier Intelligence is a read-only client workspace over the same ingredient and supplier payloads. It shows only explicit links, ranks on-time suppliers before late suppliers, then uses recorded price and stable name order; it never invents ratings or performance data.
+
+## Security boundary
+
+Pydantic validates request bounds, the CSV importer rejects formula-like ingredient names and imports atomically, and test mode refuses development/Docker database paths. The API supports optional bearer protection, explicit CORS origins, trusted hosts, and staging startup checks. These controls do not replace user identity, authorization, rate limits, TLS termination, backups, or production multi-instance storage.
 
 ## Engineering decisions and trade-offs
 
