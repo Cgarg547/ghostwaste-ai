@@ -1,4 +1,15 @@
-# Completion audit — local demo
+# Completion audit — 2026-11-09
+
+## Current evidence
+
+- **PASS:** 37 isolated pytest tests.
+- **PASS:** `scripts/e2e_local_demo.sh` loads deterministic demo data, restores a persisted scenario, renders `/`, `/inventory`, `/forecasting`, `/waste-radar`, `/optimization`, `/actions`, `/analytics`, `/settings`, and reloads Analytics in headless Chrome.
+- **PASS:** TypeScript check, Next production build, `git diff --check`, Compose configuration validation.
+- **FIXED:** Added database-backed daily-sale idempotency and `20261112_sale_idempotency`; duplicate concurrent writes recover as HTTP 409.
+- **Data safety:** test DBs are temporary namespaced paths; no development database, Docker volume, purchase, payment, or supplier contact was used.
+- **UNKNOWN/PARTIAL:** Safari QA unavailable; Docker runtime was not started.
+
+## Superseded baseline notes
 
 ## Verified
 
@@ -30,3 +41,6 @@ Verified on 2026-11-08 against `feat/full-local-demo`:
 The workflow is still local, synthetic, and approval-only. It does not contact suppliers or place orders.
 
 Verification: 22 pytest tests passed; Next production build passed; `git diff --check` passed. Browser E2E and Docker daemon inspection were unavailable in this execution.
+# Intelligence sprint audit
+
+Implemented local deterministic assistant, ephemeral scenario and impact calculations, FEFO kitchen planner, and browser-local daily task state. Added isolated API coverage for grounding/no writes, deterministic scenarios, expired exclusion, impact compatibility, and read-only stable action tasks. Limitations: browser E2E/Safari verification requires locally available browser tooling; no LLM or operational task persistence is used.

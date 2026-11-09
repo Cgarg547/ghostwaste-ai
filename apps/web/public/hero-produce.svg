@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" fill="none">
+  <defs>
+    <linearGradient id="leaf-light" x1="144" y1="88" x2="359" y2="359" gradientUnits="userSpaceOnUse"><stop stop-color="#D9F59A"/><stop offset=".47" stop-color="#8FC66C"/><stop offset="1" stop-color="#34734D"/></linearGradient>
+    <linearGradient id="leaf-mid" x1="312" y1="81" x2="451" y2="330" gradientUnits="userSpaceOnUse"><stop stop-color="#B6DB75"/><stop offset=".54" stop-color="#55965D"/><stop offset="1" stop-color="#1E553E"/></linearGradient>
+    <linearGradient id="leaf-deep" x1="433" y1="110" x2="524" y2="335" gradientUnits="userSpaceOnUse"><stop stop-color="#8DC66E"/><stop offset=".5" stop-color="#37764D"/><stop offset="1" stop-color="#174431"/></linearGradient>
+    <linearGradient id="tomato" x1="448" y1="172" x2="570" y2="318" gradientUnits="userSpaceOnUse"><stop stop-color="#FFAE70"/><stop offset=".28" stop-color="#EB744C"/><stop offset=".72" stop-color="#C84E37"/><stop offset="1" stop-color="#8F342B"/></linearGradient>
+    <radialGradient id="tomato-light" cx="0" cy="0" r="1" gradientTransform="matrix(43 37 -31 36 481 214)" gradientUnits="userSpaceOnUse"><stop stop-color="#FFE3A8" stop-opacity=".8"/><stop offset="1" stop-color="#FFE3A8" stop-opacity="0"/></radialGradient>
+    <linearGradient id="avocado-skin" x1="92" y1="233" x2="216" y2="390" gradientUnits="userSpaceOnUse"><stop stop-color="#507541"/><stop offset=".55" stop-color="#244C36"/><stop offset="1" stop-color="#102F25"/></linearGradient>
+    <linearGradient id="avocado-flesh" x1="117" y1="246" x2="197" y2="365" gradientUnits="userSpaceOnUse"><stop stop-color="#E2F39B"/><stop offset=".5" stop-color="#9BCA5E"/><stop offset="1" stop-color="#55924D"/></linearGradient>
+    <radialGradient id="pit" cx="0" cy="0" r="1" gradientTransform="matrix(35 42 -33 28 164 311)" gradientUnits="userSpaceOnUse"><stop stop-color="#C98A50"/><stop offset=".7" stop-color="#97603C"/><stop offset="1" stop-color="#653D2E"/></radialGradient>
+    <linearGradient id="carrot" x1="242" y1="353" x2="472" y2="228" gradientUnits="userSpaceOnUse"><stop stop-color="#F5A23C"/><stop offset=".42" stop-color="#E17C2D"/><stop offset="1" stop-color="#B94D28"/></linearGradient>
+    <linearGradient id="bowl" x1="218" y1="321" x2="475" y2="475" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF8E8"/><stop offset=".42" stop-color="#E5E9D5"/><stop offset="1" stop-color="#A9C4A5"/></linearGradient>
+    <linearGradient id="bowl-rim" x1="178" y1="294" x2="525" y2="337" gradientUnits="userSpaceOnUse"><stop stop-color="#E4E8D1"/><stop offset=".48" stop-color="#FFFBEF"/><stop offset="1" stop-color="#A4BEA1"/></linearGradient>
+    <linearGradient id="lemon" x1="281" y1="201" x2="352" y2="279" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF1A3"/><stop offset=".55" stop-color="#F5CE51"/><stop offset="1" stop-color="#D99B32"/></linearGradient>
+    <filter id="shadow" x="71" y="390" width="576" height="103" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="16"/></filter>
+    <filter id="soft-shadow" x="55" y="55" width="610" height="440" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feGaussianBlur in="SourceAlpha" stdDeviation="9"/><feOffset dy="12"/><feComponentTransfer><feFuncA type="linear" slope=".18"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="bowl-opening"><ellipse cx="354" cy="319" rx="174" ry="48"/></clipPath>
+  </defs>
+
+  <ellipse cx="361" cy="437" rx="250" ry="34" fill="#061E16" fill-opacity=".36" filter="url(#shadow)"/>
+
+  <g filter="url(#soft-shadow)">
+    <!-- Frilly leaves in the rear layer -->
+    <path d="M302 325C247 292 205 237 194 166c29 5 57 17 81 37-13-43-11-82 10-119 36 29 57 66 63 111 10-52 35-89 77-113 20 53 14 103-18 151 41-33 84-47 132-36-17 54-53 92-109 114 43-12 82-8 118 15-39 46-88 64-148 53L302 325Z" fill="url(#leaf-mid)"/>
+    <path d="M325 322C279 256 273 190 310 125c26 28 42 59 47 96 13-49 41-83 86-102 13 50 5 96-24 138 40-32 83-43 132-29-23 50-61 82-115 95 37-6 70 1 99 22-43 36-92 48-147 33l-63-56Z" fill="url(#leaf-light)"/>
+    <path d="M339 323c11-76 49-130 116-162 4 47-5 86-29 118 39-28 80-36 124-23-28 44-68 71-120 79 39-1 70 11 95 37-50 23-98 21-145-6l-41-43Z" fill="url(#leaf-deep)"/>
+    <path d="M315 320 235 197m100 128-19-171m35 169 62-148m-42 150 118-83m-136 85 116 30" stroke="#E9F7BC" stroke-opacity=".61" stroke-width="3" stroke-linecap="round"/>
+    <path d="M302 325c25-50 54-83 88-103" stroke="#F3F7D1" stroke-opacity=".42" stroke-width="2"/>
+
+    <!-- Carrot laid diagonally behind the bowl -->
+    <path d="M233 351c65-68 145-123 247-160 12 2 16 10 9 21-53 83-122 144-206 184-26 12-47-22-50-45Z" fill="url(#carrot)"/>
+    <path d="M264 351c56-49 111-86 172-117M301 366l-13-17m57-4-12-19m62-10-12-18m57-28-9-16" stroke="#FFD27A" stroke-opacity=".55" stroke-width="3" stroke-linecap="round"/>
+    <path d="M225 347c-29-29-37-57-23-83 20 18 31 40 30 65 1-40 17-68 49-84 4 32-7 61-34 86 34-27 67-32 98-14-23 27-53 41-90 40" fill="#6EA45E"/>
+
+    <!-- Avocado half with layered flesh, stone, and specular highlight -->
+    <g transform="rotate(-17 159 304)">
+      <path d="M91 304c0-61 31-105 69-105s69 44 69 105-31 105-69 105-69-44-69-105Z" fill="url(#avocado-skin)"/>
+      <path d="M103 304c0-50 25-86 57-86s57 36 57 86-25 86-57 86-57-36-57-86Z" fill="url(#avocado-flesh)"/>
+      <path d="M113 274c10-31 28-48 51-50" stroke="#F1F8B6" stroke-opacity=".72" stroke-width="6" stroke-linecap="round"/>
+      <ellipse cx="160" cy="315" rx="29" ry="36" fill="url(#pit)"/>
+      <ellipse cx="151" cy="303" rx="8" ry="12" fill="#F0B475" fill-opacity=".5"/>
+    </g>
+
+    <!-- Ceramic serving bowl -->
+    <path d="M180 318c12 91 71 145 174 145s162-54 174-145H180Z" fill="url(#bowl)" stroke="#91AE91" stroke-width="3"/>
+    <path d="M207 371c38 47 90 70 147 70 59 0 111-23 150-70" stroke="#FFFDF4" stroke-opacity=".85" stroke-width="6" stroke-linecap="round"/>
+    <path d="M223 423c39 22 83 33 131 33 49 0 93-11 132-33" stroke="#86A887" stroke-opacity=".37" stroke-width="3" stroke-linecap="round"/>
+    <ellipse cx="354" cy="319" rx="174" ry="48" fill="url(#bowl-rim)" stroke="#8DAA8E" stroke-width="3"/>
+
+    <!-- Salad mound, clipped to the serving bowl -->
+    <g clip-path="url(#bowl-opening)">
+      <ellipse cx="354" cy="327" rx="163" ry="48" fill="#436D42"/>
+      <path d="M216 326c14-42 48-55 82-24 5-46 38-67 76-31 25-43 67-43 91-4 38-28 73-4 72 38-34 46-77 61-143 57-66 0-121-9-178-36Z" fill="#5B944F"/>
+      <path d="M225 317c17-34 38-37 59-8-3-39 23-50 47-20 11-40 39-47 57-13 20-33 47-25 50 10 32-29 55-18 57 18-37 23-83 36-139 34-53 1-96-7-131-21Z" fill="#8DBB5E"/>
+      <path d="M236 325c30-22 48-37 58-58m5 64c8-37 20-59 39-74m20 77c7-41 20-59 37-69m23 74c12-30 29-48 47-56" stroke="#D8E99B" stroke-opacity=".8" stroke-width="3" stroke-linecap="round"/>
+      <path d="M262 301c18-17 36-15 46 5-19 16-35 15-46-5Zm89-29c20-13 38-5 39 17-22 11-37 5-39-17Zm72 29c20-17 39-9 41 13-22 14-38 8-41-13Z" fill="#D4E58C"/>
+      <circle cx="291" cy="323" r="12" fill="#E86849"/><circle cx="400" cy="338" r="10" fill="#F0A64C"/><circle cx="455" cy="312" r="11" fill="#D85A3D"/>
+      <circle cx="290" cy="319" r="3" fill="#FFE1A0"/><circle cx="452" cy="308" r="3" fill="#FFD48B"/>
+      <path d="M319 330c13-19 27-21 40-5-9 20-23 23-40 5Zm78-35c15-18 32-16 39 3-15 17-29 16-39-3Z" fill="#679E51"/>
+    </g>
+    <path d="M193 313c43 21 84 31 161 31s119-10 161-31" stroke="#FFFDF4" stroke-opacity=".88" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Tomato with calyx and light falloff -->
+    <circle cx="516" cy="267" r="70" fill="url(#tomato)"/>
+    <circle cx="516" cy="267" r="70" fill="url(#tomato-light)"/>
+    <path d="m516 201 8-21 12 19 24-8-12 21 20 11-24 2 1 24-15-19-20 13 9-22-22-9 24-3-5-21Z" fill="#588747"/>
+    <path d="M511 222c-17 23-20 56-7 91" stroke="#FFD5A2" stroke-opacity=".42" stroke-width="4" stroke-linecap="round"/>
+    <ellipse cx="487" cy="246" rx="11" ry="19" transform="rotate(31 487 246)" fill="#FFF0C1" fill-opacity=".32"/>
+
+    <!-- Lemon cross-section and small herbs in the foreground -->
+    <g transform="rotate(-21 289 248)">
+      <circle cx="289" cy="248" r="39" fill="#D89D39"/>
+      <circle cx="289" cy="248" r="33" fill="url(#lemon)" stroke="#FFF1B0" stroke-width="3"/>
+      <circle cx="289" cy="248" r="5" fill="#FFF7D1"/>
+      <path d="m289 215 3 27 20-17-17 20 26 3-26 3 17 20-20-17-3 28-3-28-20 17 17-20-26-3 26-3-17-20 20 17 3-27Z" fill="#FFF5C4" fill-opacity=".72"/>
+    </g>
+    <path d="M527 360c13-33 37-45 72-35-14 28-37 41-72 35Zm-5 2c-1-31 11-52 39-63 5 28-8 49-39 63Zm-8 4c-21-24-22-48-4-73 21 22 22 46 4 73Z" fill="#5B9858"/>
+    <path d="M522 367c18-25 41-42 69-51" stroke="#D9EDA2" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

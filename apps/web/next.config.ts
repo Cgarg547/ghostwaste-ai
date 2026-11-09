@@ -1,4 +1,4 @@
 import type { NextConfig } from 'next';
-const backendOrigin=(process.env.BACKEND_ORIGIN || 'http://127.0.0.1:8000').replace(/\/$/,'');
-const nextConfig:NextConfig={async rewrites(){return [{source:'/api/:path*',destination:`${backendOrigin}/:path*`}]}};
+// Runtime route handler keeps the private API hostname and bearer token out of browser bundles.
+const nextConfig:NextConfig={distDir:process.env.NEXT_DIST_DIR||'.next'};
 export default nextConfig;

@@ -6,18 +6,49 @@ import os
 import json
 import hmac
 from io import StringIO
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, create_engine, select
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, event, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 from apps.api.engines import Batch as SimBatch, monte_carlo_risk, optimize_purchase, optimize_multi_ingredient, moving_average, seasonal_naive, lightgbm_forecast, rolling_origin_backtest, independent_interval_coverage
 
-db_path=os.environ.get("GHOSTWASTE_DB_PATH","./data/ghostwaste.db")
-os.makedirs(os.path.dirname(db_path) or ".",exist_ok=True)
+DEMO_DATE=date(2026,11,8)
+staging_mode=os.environ.get("GHOSTWASTE_STAGING_MODE","false").lower() in {"1","true","yes"}
+if staging_mode:
+    required={"GHOSTWASTE_DB_PATH":os.environ.get("GHOSTWASTE_DB_PATH",""),"GHOSTWASTE_API_TOKEN":os.environ.get("GHOSTWASTE_API_TOKEN","")}
+    missing=[name for name,value in required.items() if not value]
+    if missing: raise RuntimeError(f"Staging configuration missing: {', '.join(missing)}")
+    if os.environ.get("GHOSTWASTE_AUTO_SCHEMA","false").lower()=="true": raise RuntimeError("Staging requires reviewed Alembic migrations; auto schema is disabled.")
+    if os.environ.get("GHOSTWASTE_ENABLE_DOCS","false").lower()=="true": raise RuntimeError("Staging API docs must be disabled.")
+def _database_path():
+    """Select SQLite storage while refusing development and Docker stores in tests."""
+    configured=os.environ.get("GHOSTWASTE_DB_PATH")
+    testing=os.environ.get("GHOSTWASTE_TESTING","").lower() in {"1","true","yes"}
+    if testing and not configured: raise RuntimeError("Tests require GHOSTWASTE_DB_PATH before application import.")
+    resolved=Path(configured or "./data/ghostwaste.db").expanduser().resolve()
+    protected={Path("./data/ghostwaste.db").resolve(),Path("/app/data/ghostwaste.db").resolve()}
+    # Test harnesses must use an explicitly namespaced temporary parent.  This
+    # permits both pytest and the standalone browser E2E runner while refusing
+    # development and Docker locations.
+    safe_test_parent=("ghostwaste-pytest-" in str(resolved.parent) or "ghostwaste-e2e-" in str(resolved.parent))
+    if testing and (resolved in protected or "/app/data/" in f"{resolved}/" or not safe_test_parent):
+        raise RuntimeError(f"Refusing protected database path during tests: {resolved}")
+    resolved.parent.mkdir(parents=True,exist_ok=True)
+    return str(resolved)
+db_path=_database_path()
 engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+@event.listens_for(engine, "connect")
+def _enable_sqlite_foreign_keys(connection, _):
+    # SQLite does not enforce declared relationships unless this is enabled for
+    # every connection.  API validation remains friendlier, while this protects
+    # against orphaned rows from any future code path.
+    connection.execute("PRAGMA foreign_keys=ON")
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 class Base(DeclarativeBase): pass
 class IngredientDB(Base):
@@ -25,7 +56,9 @@ class IngredientDB(Base):
 class BatchDB(Base):
     __tablename__="inventory_batches"; id:Mapped[str]=mapped_column(String,primary_key=True); ingredient_id:Mapped[str]=mapped_column(ForeignKey("ingredients.id"),index=True); quantity_kg:Mapped[float]=mapped_column(Float); unit_cost:Mapped[float]=mapped_column(Float); received_on:Mapped[date]=mapped_column(Date); use_by:Mapped[date]=mapped_column(Date,index=True); ingredient:Mapped[IngredientDB]=relationship(back_populates="batches")
 class DailySaleDB(Base):
-    __tablename__="daily_sales"; id:Mapped[int]=mapped_column(Integer,primary_key=True); menu_item:Mapped[str]=mapped_column(String,index=True); sold_on:Mapped[date]=mapped_column(Date,index=True); quantity:Mapped[float]=mapped_column(Float)
+    __tablename__="daily_sales"
+    __table_args__=(UniqueConstraint("menu_item","sold_on",name="uq_daily_sales_menu_item_sold_on"),)
+    id:Mapped[int]=mapped_column(Integer,primary_key=True); menu_item:Mapped[str]=mapped_column(String,index=True); sold_on:Mapped[date]=mapped_column(Date,index=True); quantity:Mapped[float]=mapped_column(Float)
 class RecommendationDB(Base):
     __tablename__="recommendations"; id:Mapped[str]=mapped_column(String,primary_key=True); title:Mapped[str]=mapped_column(String); status:Mapped[str]=mapped_column(String,default="pending",index=True); estimated_kg:Mapped[float]=mapped_column(Float,default=0); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class AuditEventDB(Base):
@@ -80,6 +113,15 @@ class MultiPlanItem(BaseModel): ingredient:str=Field(min_length=1,max_length=120
 class MultiOptimizeIn(BaseModel): items:list[MultiPlanItem]=Field(min_length=1,max_length=100); horizon_days:int=Field(default=7,ge=1,le=90); storage_capacity_kg:float=Field(ge=0); preparation_capacity_hours:float|None=Field(default=None,ge=0)
 class ForecastRunIn(BaseModel): horizon:int=Field(default=7,ge=1,le=30); initial_train:int=Field(default=7,ge=3,le=365)
 class WorkflowIn(BaseModel): as_of:date; horizon_days:int=Field(default=7,ge=1,le=30); trials:int=Field(default=500,ge=50,le=5000); seed:int=42; storage_capacity_kg:float=Field(default=1000,ge=0); preparation_capacity_hours:float|None=Field(default=None,ge=0)
+class StudioIn(BaseModel):
+    """Ephemeral what-if inputs.  This model deliberately has no persistence path."""
+    as_of:date=DEMO_DATE; horizon_days:int=Field(default=7,ge=1,le=30); seed:int=Field(default=42); trials:int=Field(default=200,ge=50,le=2000)
+    demand_multiplier:float=Field(default=1,ge=0,le=3); shelf_life_days_delta:int=Field(default=0,ge=-14,le=30)
+    inventory_multiplier:float=Field(default=1,ge=0,le=3); planned_purchase_multiplier:float=Field(default=1,ge=0,le=3)
+    lead_time_days_delta:int=Field(default=0,ge=0,le=30); storage_capacity_kg:float=Field(default=30,ge=0,le=10000)
+    preparation_capacity_hours:float|None=Field(default=None,ge=0,le=10000); forecast_run_id:str|None=None
+class AssistantIn(BaseModel): question:str=Field(min_length=1,max_length=600); scenario_id:str|None=None; as_of:date=DEMO_DATE
+class ImpactCompareIn(BaseModel): baseline:StudioIn; proposed:StudioIn
 def db_session():
     db=SessionLocal()
     try: yield db
@@ -95,7 +137,44 @@ def fefo_risk(s:Scenario)->Result:
             risks.append(Risk(batch_id=b.id,ingredient=b.ingredient,at_risk_kg=risk,potential_cost=round(risk*b.unit_cost,2),days_until_use_by=days))
     return Result(risks=risks,total_at_risk_kg=round(sum(x.at_risk_kg for x in risks),3),total_potential_cost=round(sum(x.potential_cost for x in risks),2),assumptions=["Synthetic inputs; no real restaurant outcome or food-safety decision","FEFO allocation across batches with constant daily ingredient demand","Use-by is a hard boundary; expired batches are never allocated","No supplier arrivals or uncertainty in this deterministic local demo"])
 
+def _recipe_requirements(db:Session, run_id:str|None, horizon:int)->dict[str,float]:
+    """Forecast/recipe demand if available; otherwise a transparent zero-demand plan."""
+    if not run_id: return {}
+    run=db.get(ForecastRunDB,run_id)
+    if not run: raise HTTPException(404,"Forecast run not found")
+    recipe=db.scalar(select(RecipeDB).where(RecipeDB.name==run.menu_item))
+    if not recipe: raise HTTPException(422,"Selected forecast has no matching recipe")
+    servings=sum(x["quantity"] for x in json.loads(run.predictions_json)[:horizon])
+    links=list(db.scalars(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe.id)))
+    return {db.get(IngredientDB,x.ingredient_id).name:round(servings/recipe.yield_servings*x.quantity_kg,4) for x in links}
+
+def studio_calculation(data:StudioIn, db:Session)->dict:
+    """Runs the existing FEFO, Monte Carlo and CBC engines without writing records."""
+    inventory=list(db.scalars(select(BatchDB).join(BatchDB.ingredient)))
+    requirements=_recipe_requirements(db,data.forecast_run_id,data.horizon_days)
+    demand={k:v/data.horizon_days*data.demand_multiplier for k,v in requirements.items()}
+    batches=[]
+    for b in inventory:
+        adjusted_use_by=b.use_by+timedelta(days=data.shelf_life_days_delta)
+        batches.append(BatchInput(id=b.id,ingredient=b.ingredient.name,quantity_kg=round(b.quantity_kg*data.inventory_multiplier,4),unit_cost=b.unit_cost,use_by=adjusted_use_by,received_on=b.received_on))
+    risk=fefo_risk(Scenario(batches=batches,demand=[Demand(ingredient=k,expected_daily_kg=v) for k,v in demand.items()],as_of=data.as_of))
+    simulation=monte_carlo_risk([SimBatch(x.id,x.ingredient,x.quantity_kg,(x.use_by-data.as_of).days,x.unit_cost) for x in batches],demand,data.horizon_days,data.trials,data.seed).__dict__
+    items=[]
+    for ingredient, total_demand in requirements.items():
+        available=sum(x.quantity_kg for x in batches if x.ingredient==ingredient and x.use_by>=data.as_of)
+        ing=db.scalar(select(IngredientDB).where(IngredientDB.name==ingredient))
+        links=list(db.scalars(select(SupplierIngredientDB).where(SupplierIngredientDB.ingredient_id==ing.id,SupplierIngredientDB.purchase_unit_cost.is_not(None)))) if ing else []
+        link=min(links,key=lambda x:(x.purchase_unit_cost,x.supplier_id),default=None)
+        supplier=db.get(SupplierDB,link.supplier_id) if link else None
+        if supplier and link:
+            items.append({"ingredient":ingredient,"supplier":supplier.name,"available_kg":available,"demand_kg":total_demand*data.demand_multiplier,"unit_cost":link.purchase_unit_cost,"lead_days":supplier.lead_days+data.lead_time_days_delta,"min_order_kg":supplier.minimum_order_kg,"max_order_kg":1000*data.planned_purchase_multiplier})
+    plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[],"warning":"No forecast-linked recipe with priced supplier inputs was available."}
+    return {"scenario_id":f"ephemeral-{data.seed}-{data.as_of.isoformat()}","persistent":False,"provenance":"synthetic_ephemeral_what_if","as_of":str(data.as_of),"horizon_days":data.horizon_days,"seed":data.seed,"inputs":data.model_dump(mode="json"),"requirements_kg":requirements,"risk":risk.model_dump(),"monte_carlo":simulation,"optimization":plan,"assumptions":["Read-only calculation; no scenario, recommendation, purchase, or inventory record was created.","Shelf-life adjustment is a planning assumption, not food-safety advice.","Synthetic results are model outputs, not observed savings."]}
+
 app=FastAPI(title="GhostWaste API",version="0.3.0",docs_url="/docs" if os.environ.get("GHOSTWASTE_ENABLE_DOCS","true").lower()=="true" else None)
+allowed_hosts=[x.strip() for x in os.environ.get("GHOSTWASTE_ALLOWED_HOSTS","").split(",") if x.strip()]
+if allowed_hosts:
+    app.add_middleware(TrustedHostMiddleware,allowed_hosts=allowed_hosts)
 allowed_origins=[x.strip() for x in os.environ.get("GHOSTWASTE_CORS_ORIGINS","").split(",") if x.strip()]
 if allowed_origins:
     app.add_middleware(CORSMiddleware,allow_origins=allowed_origins,allow_credentials=False,allow_methods=["GET","POST"],allow_headers=["Authorization","Content-Type"])
@@ -105,7 +184,13 @@ async def local_demo_access(request:Request,call_next):
     """Optional token makes the same image safe to put behind a local proxy.
     No credential is invented or embedded; unset means loopback/demo mode only.
     """
-    if api_token and request.method not in {"GET","HEAD","OPTIONS"}:
+    public_health = request.url.path in {"/health", "/ready"} and request.method in {"GET", "HEAD"}
+    requires_token = (
+        staging_mode and not public_health
+    ) or (
+        not staging_mode and request.method not in {"GET", "HEAD", "OPTIONS"}
+    )
+    if api_token and requires_token:
         supplied=request.headers.get("authorization","").removeprefix("Bearer ")
         if not hmac.compare_digest(supplied,api_token): return Response("Unauthorized",status_code=401)
     return await call_next(request)
@@ -117,12 +202,91 @@ def setup():
 @app.get("/health")
 def health(): return {"status":"ok","version":"0.3.0","storage":"local SQLite","access_mode":"token-protected" if api_token else "local-demo (set GHOSTWASTE_API_TOKEN to protect writes)"}
 
+@app.get("/ready")
+def ready(db:Session=Depends(db_session)):
+    """Readiness is side-effect free and validates local SQLite connectivity."""
+    try: db.execute(select(IngredientDB.id).limit(1))
+    except Exception as exc: raise HTTPException(503,"Database is not ready") from exc
+    return {"status":"ready","storage":"local SQLite"}
+
+@app.post("/scenario-studio/run")
+def run_scenario_studio(data:StudioIn,db:Session=Depends(db_session)):
+    return studio_calculation(data,db)
+
+@app.get("/use-first")
+def use_first(as_of:date=DEMO_DATE,horizon_days:int=7,forecast_run_id:str|None=None,db:Session=Depends(db_session)):
+    requirements=_recipe_requirements(db,forecast_run_id,horizon_days)
+    daily={k:v/horizon_days for k,v in requirements.items()}
+    rows=[]
+    for batch in db.scalars(select(BatchDB).join(BatchDB.ingredient).order_by(BatchDB.use_by)):
+        days=(batch.use_by-as_of).days
+        # Expired stock is reported for attention but is never a use recommendation.
+        expiry_factor=max(0,min(1,(horizon_days-days+1)/max(1,horizon_days)))
+        forecast=min(batch.quantity_kg, daily.get(batch.ingredient.name,0)*max(0,min(horizon_days,days)))
+        exposure=max(0,batch.quantity_kg-forecast)
+        urgency="expired" if days<0 else "today" if days<=1 else "soon" if days<=3 else "later"
+        rank=(0 if days<0 else 1, days, -exposure)
+        recipes=[r.name for r in db.scalars(select(RecipeDB).join(RecipeIngredientDB).where(RecipeIngredientDB.ingredient_id==batch.ingredient_id))]
+        rows.append({"batch_id":batch.id,"ingredient":batch.ingredient.name,"quantity_kg":round(batch.quantity_kg,3),"unit":"kg","use_by":str(batch.use_by),"days_until_use_by":days,"forecasted_consumption_kg":round(forecast,3),"estimated_unconsumed_kg":round(exposure,3),"urgency":urgency,"recommended_for_use":days>=0,"rank":rank,"recipes":recipes,"explanation":"Expired batch — review under local food-safety procedures; it is not recommended for consumption." if days<0 else f"FEFO priority: use-by is in {days} day(s); forecast-linked demand can consume {round(forecast,2)} kg before then."})
+    rows.sort(key=lambda x:x.pop("rank"))
+    return {"as_of":str(as_of),"horizon_days":horizon_days,"forecast_run_id":forecast_run_id,"items":rows,"provenance":"inventory_fefo_forecast_planning","safety_notice":"Operational planning support only; this is not a food-safety certification."}
+
+@app.get("/action-plan")
+def action_plan(as_of:date=DEMO_DATE,forecast_run_id:str|None=None,db:Session=Depends(db_session)):
+    planner=use_first(as_of,7,forecast_run_id,db)
+    tasks=[]
+    for item in planner["items"]:
+        if item["urgency"] in {"today","soon"}:
+            priority="critical" if item["urgency"]=="today" else "high"
+            tasks.append({"id":f"use-first:{item['batch_id']}","title":f"Review {item['ingredient']} batch first","ingredient":item["ingredient"],"priority":priority,"quantity_kg":item["quantity_kg"],"unit":"kg","time_horizon":"today" if priority=="critical" else "next 3 days","reason":item["explanation"],"source":"Use-First Planner","scenario_id":forecast_run_id,"suggested":True})
+    for rec in db.scalars(select(RecommendationDB).where(RecommendationDB.status=="pending")):
+        tasks.append({"id":f"recommendation:{rec.id}","title":rec.title,"ingredient":None,"priority":"high","quantity_kg":rec.estimated_kg,"unit":"kg","time_horizon":"review before ordering","reason":"Existing approval-only recommendation requires manager review.","source":"Recommendations","scenario_id":None,"suggested":True})
+    tasks.sort(key=lambda x:({"critical":0,"high":1,"medium":2,"low":3}[x["priority"]],x["title"]))
+    return {"as_of":str(as_of),"tasks":tasks,"provenance":"read_only_suggested_plan","notice":"Checking a task in the browser records local planning state only; it does not execute an operation, change inventory, or approve a recommendation."}
+
+@app.post("/impact/compare")
+def impact_compare(data:ImpactCompareIn,db:Session=Depends(db_session)):
+    # Same snapshot/date/horizon/seed methodology is required for an impact claim.
+    b,p=data.baseline,data.proposed
+    compatible=(b.as_of==p.as_of and b.horizon_days==p.horizon_days and b.seed==p.seed and b.trials==p.trials and b.forecast_run_id==p.forecast_run_id)
+    if not compatible: raise HTTPException(422,"Impact comparison requires matching as_of date, forecast source, horizon, seed, and trial count.")
+    baseline,proposed=studio_calculation(b,db),studio_calculation(p,db)
+    def change(key:str):
+        before=float(baseline["monte_carlo"].get(key,0));after=float(proposed["monte_carlo"].get(key,0));return {"baseline":before,"proposed":after,"absolute_difference":round(after-before,3),"percent_difference":round((after-before)/before*100,2) if before else None}
+    return {"compatible":True,"baseline":baseline,"proposed":proposed,"comparison":{"expected_waste_kg":change("expected_waste_kg"),"expected_shortage_probability":change("stockout_probability"),"waste_cost":change("cost_at_risk")},"methodology":"Compatible seeded Monte Carlo FEFO calculations on the same current inventory snapshot. Differences are simulated planning estimates, not observed savings or food rescued."}
+
+@app.post("/intelligence/ask")
+def intelligence_ask(data:AssistantIn,db:Session=Depends(db_session)):
+    """Small deterministic intent router; never calls a model or mutates state."""
+    q=data.question.lower(); planner=use_first(data.as_of,7,None,db); risky=[x for x in planner["items"] if x["urgency"] in {"today","soon"}]
+    source={"page":"/use-first","label":"Use-First Planner"}
+    if any(w in q for w in ["use first","attention","reduce waste","tomorrow"]):
+        names=", ".join(x["ingredient"] for x in risky[:3]) or "no non-expired near-term batches"
+        answer=f"Prioritize {names}. Ranking uses FEFO expiry dates and available forecast-linked demand; expired batches are shown for review but never recommended for consumption."
+    elif "zero" in q and "waste" in q:
+        answer="Modeled waste can be zero when the seeded FEFO simulation allocates forecast demand before each use-by boundary. That is a model result, not proof that no physical waste occurred.";source={"page":"/waste-radar","label":"Waste Radar"}
+    elif any(w in q for w in ["optimizer","recommend","purchase","kg"]):
+        answer="Purchase quantities come from the constrained CBC optimizer using forecast-linked ingredient demand, available eligible inventory, explicit supplier price/minimum, lead time, and storage capacity. It creates no order and needs manager review.";source={"page":"/impact-studio","label":"Impact Studio"}
+    elif any(w in q for w in ["demand","forecast","uncertainty"]):
+        answer="Forecasts are selected by rolling-origin backtesting from recorded sales. Planning ranges reflect historical residual error and are not guarantees of demand.";source={"page":"/forecasting","label":"Forecasting"}
+    elif "roma" in q or "expiry" in q or "risk" in q:
+        answer="Near-expiry risk is driven by the batch use-by date, quantity remaining, and forecast demand that can be allocated before that boundary. Open the planner for batch-level evidence."
+    else:
+        answer="I can explain use-first priorities, expiry risk, forecast uncertainty, simulated waste, and constrained purchase recommendations. Choose a suggested prompt for a grounded answer."
+    return {"answer":answer,"mode":"deterministic_evidence_router","source":source,"as_of":str(data.as_of),"synthetic_data":True,"no_side_effects":True}
+
 @app.get("/dashboard")
-def dashboard(db:Session=Depends(db_session)):
+def dashboard(demo:bool=False,as_of:date|None=None,db:Session=Depends(db_session)):
     """Small, read-only rollup for the operational overview."""
-    today=date.today(); all_batches=list(db.scalars(select(BatchDB).join(BatchDB.ingredient).order_by(BatchDB.use_by)))
-    alerts=[{"id":b.id,"ingredient":b.ingredient.name,"quantity_kg":b.quantity_kg,"use_by":str(b.use_by),"days":(b.use_by-today).days,"cost":round(b.quantity_kg*b.unit_cost,2)} for b in all_batches if b.quantity_kg>0 and b.use_by<=today+timedelta(days=3)]
-    return {"ingredients":db.query(IngredientDB).count(),"batches":len(all_batches),"pending_approvals":db.query(RecommendationDB).filter(RecommendationDB.status=="pending").count(),"inventory_kg":round(sum(b.quantity_kg for b in all_batches),2),"expiry_alerts":alerts,"latest_forecasts":[{"id":x.id,"menu_item":x.menu_item,"model":x.model,"created_at":x.created_at} for x in db.scalars(select(ForecastRunDB).order_by(ForecastRunDB.created_at.desc()).limit(6))]}
+    operational_as_of=date.today(); effective_as_of=DEMO_DATE if demo else (as_of or operational_as_of); all_batches=list(db.scalars(select(BatchDB).join(BatchDB.ingredient).order_by(BatchDB.use_by)))
+    alerts=[{"id":b.id,"ingredient":b.ingredient.name,"quantity_kg":b.quantity_kg,"use_by":str(b.use_by),"days":(b.use_by-effective_as_of).days,"cost":round(b.quantity_kg*b.unit_cost,2)} for b in all_batches if b.quantity_kg>0 and b.use_by<=effective_as_of+timedelta(days=3)]
+    pending=list(db.scalars(select(RecommendationDB).where(RecommendationDB.status=="pending").order_by(RecommendationDB.created_at.desc()).limit(5)))
+    return {"as_of":str(effective_as_of),"date_context":"synthetic_demo" if demo else "operational","demo_as_of":str(DEMO_DATE),"operational_as_of":str(operational_as_of),"ingredients":db.query(IngredientDB).count(),"batches":len(all_batches),
+            "pending_approvals":db.query(RecommendationDB).filter(RecommendationDB.status=="pending").count(),
+            "pending_decisions":[{"id":x.id,"title":x.title,"estimated_kg":x.estimated_kg,"created_at":x.created_at} for x in pending],
+            "inventory_kg":round(sum(b.quantity_kg for b in all_batches),2),"expiry_alerts":alerts,
+            "expiry_attention_kg":round(sum(x["quantity_kg"] for x in alerts),2),"expiry_attention_cost":round(sum(x["cost"] for x in alerts),2),
+            "latest_forecasts":[{"id":x.id,"menu_item":x.menu_item,"model":x.model,"created_at":x.created_at} for x in db.scalars(select(ForecastRunDB).order_by(ForecastRunDB.created_at.desc()).limit(6))]}
 
 @app.post("/demo/load")
 def load_demo_data(db:Session=Depends(db_session)):
@@ -262,11 +426,32 @@ def link_supplier_ingredient(supplier_id:str,data:SupplierIngredientIn,db:Sessio
 def create_recipe(data:RecipeIn,db:Session=Depends(db_session)):
     if db.scalar(select(RecipeDB).where(RecipeDB.name==data.name.strip())): raise HTTPException(409,"Recipe already exists")
     x=RecipeDB(id=str(uuid4()),**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+def serialize_recipe(recipe: RecipeDB, db: Session):
+    """Recipe and its persisted ingredient associations for API/UI consumers."""
+    links = list(db.scalars(select(RecipeIngredientDB).where(
+        RecipeIngredientDB.recipe_id == recipe.id
+    ).order_by(RecipeIngredientDB.id)))
+    return {"id": recipe.id, "name": recipe.name, "yield_servings": recipe.yield_servings,
+            "ingredients": [{"id": link.id, "ingredient_id": link.ingredient_id,
+                             "ingredient": db.get(IngredientDB, link.ingredient_id).name,
+                             "quantity_kg": link.quantity_kg} for link in links]}
+
 @app.get("/recipes")
-def recipes(db:Session=Depends(db_session)): return [{"id":x.id,"name":x.name,"yield_servings":x.yield_servings} for x in db.scalars(select(RecipeDB).order_by(RecipeDB.name))]
+def recipes(db:Session=Depends(db_session)):
+    return [serialize_recipe(x, db) for x in db.scalars(select(RecipeDB).order_by(RecipeDB.name))]
+
+@app.get("/recipes/{recipe_id}")
+def recipe(recipe_id: str, db: Session = Depends(db_session)):
+    row = db.get(RecipeDB, recipe_id)
+    if not row: raise HTTPException(404, "Recipe not found")
+    return serialize_recipe(row, db)
 @app.post("/recipes/{recipe_id}/ingredients",status_code=201)
 def add_recipe_ingredient(recipe_id:str,data:RecipeIngredientIn,db:Session=Depends(db_session)):
     if not db.get(RecipeDB,recipe_id) or not db.get(IngredientDB,data.ingredient_id): raise HTTPException(404,"Recipe or ingredient not found")
+    existing=db.scalar(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe_id,RecipeIngredientDB.ingredient_id==data.ingredient_id))
+    if existing:
+        existing.quantity_kg=data.quantity_kg; db.commit()
+        return {"id":existing.id,"recipe_id":recipe_id,**data.model_dump()}
     x=RecipeIngredientDB(recipe_id=recipe_id,**data.model_dump());db.add(x);db.commit();return {"id":x.id,"recipe_id":recipe_id,**data.model_dump()}
 def record_stock_event(batch_id:str,data:StockEventIn,event_type:str,db:Session):
     batch=db.get(BatchDB,batch_id)
@@ -285,7 +470,17 @@ def waste(batch_id:str,data:StockEventIn,db:Session=Depends(db_session)): return
 @app.post("/sales",status_code=201)
 def create_sale(data:SaleIn,db:Session=Depends(db_session)):
     if db.scalar(select(DailySaleDB).where(DailySaleDB.menu_item==data.menu_item.strip(),DailySaleDB.sold_on==data.sold_on)): raise HTTPException(409,"A sale already exists for this menu item and date")
-    x=DailySaleDB(**data.model_dump());db.add(x);db.commit();return {"id":x.id,**data.model_dump()}
+    x=DailySaleDB(**data.model_dump());db.add(x)
+    try: db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409,"A sale already exists for this menu item and date")
+    return {"id":x.id,**data.model_dump()}
+@app.get("/sales")
+def sales(menu_item:str|None=None,db:Session=Depends(db_session)):
+    query=select(DailySaleDB).order_by(DailySaleDB.sold_on)
+    if menu_item: query=query.where(DailySaleDB.menu_item==menu_item)
+    return [{"menu_item":x.menu_item,"sold_on":str(x.sold_on),"quantity":x.quantity} for x in db.scalars(query)]
 @app.get("/forecast/{menu_item}")
 def forecast(menu_item:str,horizon:int=7,db:Session=Depends(db_session)):
     if not 1<=horizon<=30: raise HTTPException(422,"Horizon must be 1–30 days")
@@ -306,9 +501,27 @@ def create_forecast_run(menu_item:str,data:ForecastRunIn,db:Session=Depends(db_s
     for item in forecasts: db.add(ForecastPredictionDB(forecast_run_id=run.id,predicted_for=date.fromisoformat(item["date"]),quantity=item["quantity"],low=item["low"],high=item["high"]))
     db.commit()
     return {"id":run.id,"menu_item":menu_item,"model":model,"training_points":len(values),"evaluation":evaluation,"predictions":forecasts,"provenance":"local_demo_sales","limitations":"Baseline models only; results are not restaurant pilot metrics."}
+
+def serialize_forecast_run(run:ForecastRunDB):
+    """Return the same complete contract for a newly-created or restored run."""
+    return {"id":run.id,"menu_item":run.menu_item,"model":run.model,
+            "metrics":json.loads(run.metrics_json),"predictions":json.loads(run.predictions_json),
+            "created_at":run.created_at,"provenance":"local_demo_sales",
+            "limitations":"Baseline models only; results are not restaurant pilot metrics."}
+
+@app.get("/forecast-runs")
+def forecast_runs(db:Session=Depends(db_session)):
+    """Persisted runs are deliberately listable so a browser selection can be validated."""
+    return [serialize_forecast_run(x) for x in db.scalars(select(ForecastRunDB).order_by(ForecastRunDB.created_at.desc()))]
+
+@app.get("/forecast-runs/{run_id}")
+def forecast_run(run_id:str,db:Session=Depends(db_session)):
+    run=db.get(ForecastRunDB,run_id)
+    if not run: raise HTTPException(404,"Forecast run not found")
+    return serialize_forecast_run(run)
 @app.get("/forecasts/{menu_item}/history")
 def forecast_history(menu_item:str,db:Session=Depends(db_session)):
-    return [{"id":x.id,"model":x.model,"metrics":json.loads(x.metrics_json),"predictions":json.loads(x.predictions_json),"created_at":x.created_at} for x in db.scalars(select(ForecastRunDB).where(ForecastRunDB.menu_item==menu_item).order_by(ForecastRunDB.created_at.desc()))]
+    return [serialize_forecast_run(x) for x in db.scalars(select(ForecastRunDB).where(ForecastRunDB.menu_item==menu_item).order_by(ForecastRunDB.created_at.desc()))]
 @app.get("/forecasts/{run_id}/ingredient-demand")
 def ingredient_demand(run_id:str,db:Session=Depends(db_session)):
     run=db.get(ForecastRunDB,run_id)
@@ -327,8 +540,17 @@ def recipe_workflow(run_id:str,data:WorkflowIn,db:Session):
     if not run: raise HTTPException(404,"Forecast run not found")
     recipe=db.scalar(select(RecipeDB).where(RecipeDB.name==run.menu_item))
     if not recipe: raise HTTPException(404,"No recipe named for this menu item")
+    recipe_links=list(db.scalars(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe.id)))
+    if not recipe_links: raise HTTPException(422,"Recipe has no ingredient associations")
+    input_data={"as_of":str(data.as_of),"horizon_days":data.horizon_days,"trials":data.trials,"storage_capacity_kg":data.storage_capacity_kg,"preparation_capacity_hours":data.preparation_capacity_hours}
+    # A route refresh must not create a second simulation or a second approval card.
+    # Same run + same explicit inputs and seed restores the persisted scenario instead.
+    for existing in db.scalars(select(RiskScenarioDB).where(RiskScenarioDB.forecast_run_id==run_id, RiskScenarioDB.seed==data.seed).order_by(RiskScenarioDB.created_at.desc())):
+        if json.loads(existing.inputs_json)==input_data:
+            return {"scenario_id":existing.id,"forecast_run_id":run_id,"recipe":run.menu_item,
+                    "result":json.loads(existing.outputs_json),"recommendations":[],"restored":True}
     servings=sum(x["quantity"] for x in json.loads(run.predictions_json)); requirements={}
-    for ri in db.scalars(select(RecipeIngredientDB).where(RecipeIngredientDB.recipe_id==recipe.id)):
+    for ri in recipe_links:
         ingredient=db.get(IngredientDB,ri.ingredient_id);requirements[ingredient.name]=servings/recipe.yield_servings*ri.quantity_kg
     inventory=list(db.scalars(select(BatchDB).join(BatchDB.ingredient)))
     batches=[BatchInput(id=b.id,ingredient=b.ingredient.name,quantity_kg=b.quantity_kg,use_by=b.use_by,unit_cost=b.unit_cost,received_on=b.received_on) for b in inventory]
@@ -340,15 +562,40 @@ def recipe_workflow(run_id:str,data:WorkflowIn,db:Session):
         relevant=[b for b in inventory if b.ingredient.name==ingredient and b.use_by>=data.as_of]
         available=sum(b.quantity_kg for b in relevant)
         ingredient_row=db.scalar(select(IngredientDB).where(IngredientDB.name==ingredient))
-        link=db.scalar(select(SupplierIngredientDB).where(SupplierIngredientDB.ingredient_id==ingredient_row.id).limit(1))
+        # Only an explicit ingredient link is eligible.  Select deterministically
+        # (lowest known unit price, then supplier id) rather than accidentally
+        # borrowing a constraint from an unrelated supplier.
+        links=list(db.scalars(select(SupplierIngredientDB).where(
+            SupplierIngredientDB.ingredient_id==ingredient_row.id,
+            SupplierIngredientDB.purchase_unit_cost.is_not(None)
+        )))
+        link=min(links, key=lambda row: (row.purchase_unit_cost, row.supplier_id), default=None)
         supplier=db.get(SupplierDB,link.supplier_id) if link else None
         # An unlinked supplier or unknown purchase price cannot produce a purchase recommendation.
         if supplier and link and link.purchase_unit_cost is not None:
             items.append({"ingredient":ingredient,"available_kg":available,"demand_kg":demand_kg,"unit_cost":link.purchase_unit_cost,"lead_days":supplier.lead_days,"min_order_kg":supplier.minimum_order_kg,"supplier":supplier.name,"max_order_kg":1000})
     plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[],"warning":"No ingredients have an assigned supplier with a known purchase price; no purchase recommendation was calculated."}
+    # Keep unavailable inputs visible in totals.  Omitting them made the
+    # optimized shortage look better than it was, even though no order could be
+    # recommended without an explicit priced supplier relationship.
+    eligible={x["ingredient"] for x in items}
+    unavailable=[]
+    for ingredient,demand_kg in requirements.items():
+        if ingredient not in eligible:
+            available=sum(b.quantity_kg for b in inventory if b.ingredient.name==ingredient and b.use_by>=data.as_of)
+            shortage=max(0, demand_kg-available)
+            unavailable.append({"ingredient":ingredient,"supplier":None,"order_kg":0,"shortage_kg":round(shortage,3),"surplus_kg":round(max(0,available-demand_kg),3),"lead_time_blocks_order":False,"minimum_order_kg":None,"order_activated":False,"purchase_unavailable":True})
+    if unavailable:
+        plan["items"]=plan.get("items",[])+unavailable
+        plan["baseline_shortage_kg"]=round(sum(max(0, requirements[name]-sum(b.quantity_kg for b in inventory if b.ingredient.name==name and b.use_by>=data.as_of)) for name in requirements),3)
+        plan["optimized_shortage_kg"]=round(sum(row["shortage_kg"] for row in plan["items"]),3)
+        plan["warning"]="Some ingredients have no explicitly linked supplier with a known price; their shortages remain unmet and no purchase recommendation was calculated."
     simulation=monte_carlo_risk([SimBatch(b.id,b.ingredient.name,b.quantity_kg,(b.use_by-data.as_of).days,b.unit_cost) for b in inventory],{k:v/data.horizon_days for k,v in requirements.items()},data.horizon_days,data.trials,data.seed).__dict__
-    output={"risk":risk.model_dump(),"monte_carlo":simulation,"optimization":plan,"requirements_kg":requirements,"provenance":"simulated_forecast_recipe_inventory","warning":"Simulated planning output; no purchase or food-safety action is executed."}
-    record=RiskScenarioDB(id=str(uuid4()),forecast_run_id=run_id,seed=data.seed,inputs_json=json.dumps({"as_of":str(data.as_of),"horizon_days":data.horizon_days,"trials":data.trials,"storage_capacity_kg":data.storage_capacity_kg,"preparation_capacity_hours":data.preparation_capacity_hours}),outputs_json=json.dumps(output));db.add(record)
+    output={"risk":risk.model_dump(),"monte_carlo":simulation,"optimization":plan,"requirements_kg":requirements,
+            "scenario_as_of":str(data.as_of),"horizon_days":data.horizon_days,
+            "provenance":"simulated_forecast_recipe_inventory",
+            "warning":"Simulated planning output; no purchase or food-safety action is executed."}
+    record=RiskScenarioDB(id=str(uuid4()),forecast_run_id=run_id,seed=data.seed,inputs_json=json.dumps(input_data),outputs_json=json.dumps(output));db.add(record)
     recommendations=[]
     for row in plan.get("items",[]):
         if row["order_kg"]>0 or row["shortage_kg"]>0:
@@ -363,7 +610,12 @@ def risk_scenario(scenario_id:str,db:Session=Depends(db_session)):
     if not x: raise HTTPException(404,"Risk scenario not found")
     return {"id":x.id,"forecast_run_id":x.forecast_run_id,"seed":x.seed,"inputs":json.loads(x.inputs_json),"outputs":json.loads(x.outputs_json),"provenance":"simulated_forecast_recipe_inventory"}
 @app.get("/risk-scenarios")
-def risk_scenarios(db:Session=Depends(db_session)): return [{"id":x.id,"forecast_run_id":x.forecast_run_id,"seed":x.seed,"created_at":x.created_at} for x in db.scalars(select(RiskScenarioDB).order_by(RiskScenarioDB.created_at.desc()))]
+def risk_scenarios(forecast_run_id:str|None=None,db:Session=Depends(db_session)):
+    query=select(RiskScenarioDB).order_by(RiskScenarioDB.created_at.desc())
+    if forecast_run_id: query=query.where(RiskScenarioDB.forecast_run_id==forecast_run_id)
+    return [{"id":x.id,"forecast_run_id":x.forecast_run_id,"seed":x.seed,"created_at":x.created_at,
+             "inputs":json.loads(x.inputs_json),"outputs":json.loads(x.outputs_json),
+             "provenance":"simulated_forecast_recipe_inventory"} for x in db.scalars(query)]
 @app.post("/recommendations/from-scenario")
 def recommend(s:Scenario,db:Session=Depends(db_session)):
     result=fefo_risk(s); items=[]

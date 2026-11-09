@@ -3,6 +3,7 @@ from apps.api.engines import Batch, metrics, monte_carlo_risk, optimize_purchase
 def test_metrics_and_seasonal_baseline_are_deterministic():
     assert seasonal_naive([1,2,3,4,5,6,7],3)==[1,2,3]
     assert metrics([1,2],[1,4])["mae"]==1
+    assert metrics([0,0],[0,0])["wape"] is None
 
 def test_monte_carlo_repeats_for_same_seed_and_never_uses_expired_stock():
     batches=[Batch("expired","x",5,-1,3),Batch("fresh","x",2,2,3)]
@@ -16,6 +17,12 @@ def test_purchase_optimizer_prioritizes_service_without_automatic_action():
     assert output["status"]=="optimal"
     assert output["recommended_order_kg"]==8
     assert output["expected_shortage_kg"]==0
+
+def test_purchase_optimizer_does_not_force_a_supplier_minimum_when_stock_is_sufficient():
+    output=optimize_purchase(available_kg=10,demand_kg=2,unit_cost=1,min_order_kg=5,max_order_kg=20)
+    assert output["status"]=="optimal"
+    assert output["recommended_order_kg"]==0
+    assert output["expected_surplus_kg"]==8
 
 def test_rolling_origin_never_uses_future_values():
     result=rolling_origin_backtest([1,2,3,4,5,6,7,8],initial_train=4)
@@ -38,3 +45,7 @@ def test_multi_optimizer_reports_supplier_minimum_and_diagnostics():
     assert result["items"][0]["order_kg"]==5
     assert result["items"][0]["order_activated"] is True
     assert "supplier minimum order" in result["diagnostics"]["constraints"]
+
+def test_multi_optimizer_reports_infeasible_preparation_capacity():
+    result=optimize_multi_ingredient([{"ingredient":"prep","available_kg":5,"demand_kg":2,"unit_cost":1,"prep_hours_per_kg":2}],7,10,3)
+    assert result=={"status":"infeasible","items":[]}

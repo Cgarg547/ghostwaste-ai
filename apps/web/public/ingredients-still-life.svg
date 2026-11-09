@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 300" fill="none">
+  <defs>
+    <linearGradient id="leaf" x1="80" y1="35" x2="245" y2="210" gradientUnits="userSpaceOnUse"><stop stop-color="#BAE879"/><stop offset="1" stop-color="#438A5C"/></linearGradient>
+    <linearGradient id="tomato" x1="278" y1="90" x2="370" y2="220" gradientUnits="userSpaceOnUse"><stop stop-color="#F2A35E"/><stop offset="1" stop-color="#C95E35"/></linearGradient>
+    <linearGradient id="bowl" x1="122" y1="185" x2="302" y2="268" gradientUnits="userSpaceOnUse"><stop stop-color="#EFF4E8"/><stop offset="1" stop-color="#BDD6C0"/></linearGradient>
+    <filter id="blur" x="54" y="238" width="333" height="52" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="12"/></filter>
+  </defs>
+  <ellipse cx="220" cy="264" rx="154" ry="16" fill="#315B42" fill-opacity=".16" filter="url(#blur)"/>
+  <!-- layered greens -->
+  <path d="M173 207C93 198 70 146 85 78c57 13 109 59 88 129Z" fill="url(#leaf)"/>
+  <path d="M168 208C122 161 112 116 91 85M189 211c-12-51-2-91 27-132 44 46 42 101-27 132Z" fill="#78AD65"/>
+  <path d="M194 206c-2-65 27-109 83-129 8 65-21 110-83 129Z" fill="#367D55"/>
+  <path d="M182 208 124 126M190 207l20-88M193 208l62-113" stroke="#DBF1A5" stroke-opacity=".65" stroke-width="2" stroke-linecap="round"/>
+  <!-- tomato -->
+  <circle cx="311" cy="162" r="51" fill="url(#tomato)"/>
+  <path d="m309 111 7-15 8 14 18-7-8 17" fill="#548747"/>
+  <path d="M310 116c-8 22-9 54 2 92" stroke="#F9C290" stroke-opacity=".45" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="293" cy="146" r="7" fill="#F7BE85" fill-opacity=".5"/>
+  <!-- bowl and ingredient layers -->
+  <path d="M111 191c8 48 35 76 101 76s95-28 103-76H111Z" fill="url(#bowl)" stroke="#94B59A" stroke-width="2"/>
+  <ellipse cx="213" cy="190" rx="102" ry="24" fill="#E8F2DF" stroke="#94B59A" stroke-width="2"/>
+  <path d="M137 184c21-20 43-19 61 1-18 23-40 25-61-1Z" fill="#80B463"/>
+  <path d="M186 183c17-27 43-29 62-2-16 25-39 29-62 2Z" fill="#A7D274"/>
+  <path d="M232 184c19-22 44-18 55 4-24 19-43 17-55-4Z" fill="#5B985D"/>
+  <circle cx="173" cy="190" r="7" fill="#F1B367"/><circle cx="222" cy="193" r="6" fill="#D77048"/><circle cx="263" cy="187" r="6" fill="#E6BE72"/>
+  <path d="M144 214c27 25 106 34 143 0" stroke="white" stroke-opacity=".75" stroke-width="3" stroke-linecap="round"/>
+</svg>

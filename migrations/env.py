@@ -1,8 +1,30 @@
+import os
+from pathlib import Path
+
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import URL
 from apps.api.main import Base
 
 config = context.config
+
+db_path = os.environ.get("GHOSTWASTE_DB_PATH")
+staging = os.environ.get("GHOSTWASTE_STAGING_MODE", "").lower() in {
+    "1", "true", "yes"
+}
+
+if staging and not db_path:
+    raise RuntimeError("Staging migrations require GHOSTWASTE_DB_PATH")
+
+if staging and db_path:
+    resolved = Path(db_path).expanduser().resolve()
+    config.set_main_option(
+        "sqlalchemy.url",
+        URL.create("sqlite", database=str(resolved)).render_as_string(
+            hide_password=False
+        ),
+    )
+
 target_metadata = Base.metadata
 
 def run_migrations_offline():

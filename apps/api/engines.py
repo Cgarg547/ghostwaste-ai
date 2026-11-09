@@ -83,14 +83,18 @@ def monte_carlo_risk(batches: Iterable[Batch], daily_demand: dict[str,float], ho
     a=np.array(waste);return SimulationResult(round(float(a.mean()),3),round(float(np.mean(a>0)),3),round(float(np.mean(stockouts)),3),round(float(np.mean(costs)),2),round(float(np.quantile(a,.1)),3),round(float(np.quantile(a,.9)),3),seed,trials)
 
 def optimize_purchase(available_kg:float, demand_kg:float, unit_cost:float, min_order_kg:float=0, max_order_kg:float=1000, shortage_penalty:float=20, waste_penalty:float=2)->dict:
-    """LP purchase recommendation. It transparently balances surplus, shortage and cost."""
+    """Optional purchase plan; supplier minimum applies only when an order is made."""
     if min(available_kg,demand_kg,unit_cost,min_order_kg,max_order_kg,shortage_penalty,waste_penalty)<0 or min_order_kg>max_order_kg: raise ValueError("Invalid optimization inputs")
-    solver=pywraplp.Solver.CreateSolver("GLOP")
-    if not solver: raise RuntimeError("OR-Tools GLOP solver unavailable")
+    # A minimum order is a disjunction: order zero, or at least the minimum.
+    # CBC represents it faithfully; the former LP forced an unnecessary order
+    # even when existing inventory already met demand.
+    solver=pywraplp.Solver.CreateSolver("CBC_MIXED_INTEGER_PROGRAMMING")
+    if not solver: raise RuntimeError("OR-Tools CBC solver unavailable")
     order=solver.NumVar(0,max_order_kg,"order"); shortage=solver.NumVar(0,solver.infinity(),"shortage"); surplus=solver.NumVar(0,solver.infinity(),"surplus")
+    active=solver.IntVar(0,1,"order_active")
     solver.Add(available_kg+order+shortage-surplus==demand_kg)
-    if min_order_kg>0: # Avoid unsupported binary choice: this local model assumes an order is needed when min is configured.
-        solver.Add(order>=min_order_kg)
+    solver.Add(order <= max_order_kg * active)
+    solver.Add(order >= min_order_kg * active)
     solver.Minimize(unit_cost*order+shortage_penalty*shortage+waste_penalty*surplus)
     status=solver.Solve(); names={solver.OPTIMAL:"optimal",solver.FEASIBLE:"feasible"}
     return {"status":names.get(status,"infeasible"),"recommended_order_kg":round(order.solution_value(),3) if status in names else None,"expected_shortage_kg":round(shortage.solution_value(),3) if status in names else None,"expected_surplus_kg":round(surplus.solution_value(),3) if status in names else None,"objective":round(solver.Objective().Value(),3) if status in names else None,"assumptions":["Single-ingredient linear purchase planning", "Recommendation only; manager approval required", "No order executes through this API"]}

@@ -1,42 +1,79 @@
-# GhostWaste AI
+# GhostWaste AI — local synthetic demo
 
-**Status: Sprint 1 starter prototype — NOT submission-ready.**
-
-A local, synthetic restaurant inventory expiry-risk demo for Arbiter Hacks V1. This starter intentionally does **not** claim real AI forecasting, FEFO batch allocation, optimization, observed waste prevention, food-safety validation, or live deployment.
+GhostWaste is a local-only restaurant inventory planning demo. It stores data in SQLite, uses synthetic demo records, and creates approval-only recommendations. It never places orders, initiates payments, or contacts suppliers.
 
 ## Requirements
-- Python 3.11+ and Node.js 22+
 
-## Run locally (two terminals)
+- Python 3.11+ (the supplied containers use Python 3.14)
+- Node.js 22+
+- Optional: Docker Compose, Google Chrome for the browser smoke suite
 
-Terminal 1, from repository root:
+## Clean local setup
+
+From a fresh checkout:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r apps/api/requirements.txt
+cd apps/web && npm ci && cd ../..
+cp .env.example .env  # optional; do not commit it
+```
+
+The default database is `data/ghostwaste.db`. For an explicit location, set `GHOSTWASTE_DB_PATH`. SQLite creates the parent directory. Never point tests at an existing demo database.
+
+To use explicit migrations instead of the local-demo auto-schema:
+
+```bash
+export GHOSTWASTE_DB_PATH="$PWD/data/ghostwaste.db"
+export GHOSTWASTE_AUTO_SCHEMA=false
+alembic upgrade head
+```
+
+## Run and use the demo
+
+Start the API:
+
+```bash
+source .venv/bin/activate
 uvicorn apps.api.main:app --reload --port 8000
 ```
 
-Terminal 2:
+In another terminal:
+
 ```bash
 cd apps/web
-npm install
 npm run dev
 ```
-Open http://localhost:3000. API docs: http://localhost:8000/docs.
 
-## Run tests
+Open http://127.0.0.1:3000 and choose **Load demo data**. The loader is idempotent and only adds its namespaced synthetic records; it does not delete or update other local data. It creates inventory, recipe links, sales history, and a persisted forecast. Create a scenario from Waste Radar/Optimization, then approve or reject a recommendation in Action Center. Approval only writes a local audit event.
+
+For Docker, run `docker compose up --build`; open http://127.0.0.1:3000. The compose database is a named volume. Do not use `docker compose down -v` if you want to retain it.
+
+## Checks
+
 ```bash
 source .venv/bin/activate
 python -m pytest tests -q
+cd apps/web && npx tsc --noEmit && npm run build
+cd ../.. && git diff --check && docker compose config
+./scripts/e2e_local_demo.sh
 ```
 
-## Current limitations
-- Inventory scenario uses hardcoded synthetic examples; UI date defaults to Nov 8, 2026.
-- One batch per ingredient; duplicates rejected rather than miscomputed.
-- No real demand forecasting; fixed daily-demand assumptions only.
-- No food-safety guidance or actual operational action.
-- No hosted database, authentication, CSV ingestion or optimizer yet.
-- The frontend requires the API on localhost:8000; deploy needs a real API URL and hosting configuration.
+The pytest fixture requires a unique temporary path and refuses the development and Docker database locations. The E2E script starts a separate API and web server on loopback with a temporary SQLite file, then renders all eight browser routes in headless Chrome.
 
-See `docs/ROADMAP.md` for release gates.
+## Local safety configuration
+
+`GHOSTWASTE_API_TOKEN` optionally requires a bearer token for writes. `GHOSTWASTE_CORS_ORIGINS` is an explicit comma-separated allow-list; leaving it unset enables no cross-origin browser access. Bind the API to `127.0.0.1` for the documented demo scope. This is not production authentication or authorization.
+
+## Troubleshooting
+
+- Port 8000/3000 in use: stop the other local service or change both the Uvicorn port and `BACKEND_ORIGIN`.
+- Fresh database has no data: use **Load demo data**; do not edit SQLite manually.
+- `alembic upgrade head` stops on a legacy duplicate daily sale: resolve that data deliberately before rerunning; the migration does not delete records automatically.
+- Browser E2E needs macOS Google Chrome at `/Applications/Google Chrome.app`; use the API/backend checks if it is unavailable and record browser verification as partial.
+
+See `docs/hackathon-readiness.md` for verified scope and remaining risks.
+# Intelligence & kitchen planning additions
+
+The local demo includes GhostWaste Intelligence (deterministic evidence answers), Scenario Studio (ephemeral seeded FEFO/Monte Carlo/CBC calculations), Use-First Planner, Impact Studio, and a Daily Kitchen Action Plan. Load demo data, select its forecast, then use the five new sidebar workspaces. These are planning aids only: simulated changes are not observed savings, and task ticks are browser-local planning state.

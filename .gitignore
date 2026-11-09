@@ -4,5 +4,31 @@ __pycache__/
 .pytest_cache/
 node_modules/
 .next/
+/apps/web/.next-e2e/
+/apps/web/.next-verification/
+/apps/web/test-results/
+/apps/web/playwright-report/
 *.db
 .DS_Store
+
+# Local databases and backups
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+/backups/
+
+# Generated TypeScript build information
+*.tsbuildinfo
+
+# Local credentials and environment overrides
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local source-edit backups
+*.pre-*-backup
+
+Dockerfile.api.pre-startup-backup
