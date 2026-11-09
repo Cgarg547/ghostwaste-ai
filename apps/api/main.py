@@ -164,8 +164,33 @@ def studio_calculation(data:StudioIn, db:Session)->dict:
         available=sum(x.quantity_kg for x in batches if x.ingredient==ingredient and x.use_by>=data.as_of)
         ing=db.scalar(select(IngredientDB).where(IngredientDB.name==ingredient))
         links=list(db.scalars(select(SupplierIngredientDB).where(SupplierIngredientDB.ingredient_id==ing.id,SupplierIngredientDB.purchase_unit_cost.is_not(None)))) if ing else []
-        link=min(links,key=lambda x:(x.purchase_unit_cost,x.supplier_id),default=None)
-        supplier=db.get(SupplierDB,link.supplier_id) if link else None
+        # Prefer suppliers able to deliver within this scenario's horizon.
+        # Among on-time suppliers, choose the lowest priced option.
+        # If all suppliers are late, retain the cheapest for diagnostics.
+        candidates = [
+            (link, db.get(SupplierDB, link.supplier_id))
+            for link in links
+        ]
+        candidates = [
+            (link, supplier)
+            for link, supplier in candidates
+            if supplier is not None
+        ]
+        on_time = [
+            (link, supplier)
+            for link, supplier in candidates
+            if supplier.lead_days + data.lead_time_days_delta <= data.horizon_days
+        ]
+        eligible = on_time if on_time else candidates
+        selected = min(
+            eligible,
+            key=lambda pair: (
+                pair[0].purchase_unit_cost,
+                pair[0].supplier_id,
+            ),
+            default=None,
+        )
+        link, supplier = selected if selected else (None, None)
         if supplier and link:
             items.append({"ingredient":ingredient,"supplier":supplier.name,"available_kg":available,"demand_kg":total_demand*data.demand_multiplier,"unit_cost":link.purchase_unit_cost,"lead_days":supplier.lead_days+data.lead_time_days_delta,"min_order_kg":supplier.minimum_order_kg,"max_order_kg":1000*data.planned_purchase_multiplier})
     plan=optimize_multi_ingredient(items,data.horizon_days,data.storage_capacity_kg,data.preparation_capacity_hours) if items else {"status":"infeasible","items":[],"warning":"No forecast-linked recipe with priced supplier inputs was available."}
