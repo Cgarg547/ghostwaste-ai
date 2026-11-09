@@ -255,6 +255,22 @@ test('intelligence workspaces calculate locally and preserve browser task state'
   await gotoSection(page, 'Scenario Studio');
   await page.getByRole('button', { name: 'Run simulation' }).click();
   await expect(page.getByText(/EPHEMERAL/)).toBeVisible();
+
+  // Verify the ingredient-level shortage diagnostics.
+  const diagnostics = page.getByRole('region', {
+    name: 'Ingredient shortage diagnostics',
+  });
+  await expect(diagnostics).toBeVisible();
+  await expect(
+    diagnostics.getByText('Shortage risk by ingredient')
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByText(/Chance of shortage:/).first()
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByText('Average unmet demand per trial').first()
+  ).toBeVisible();
+
   await gotoSection(page, 'Use-First Planner');
   await expect(page.getByText('Smart Use-First Planner')).toBeVisible();
   await gotoSection(page, 'Impact Studio');

@@ -1,6 +1,6 @@
 """Deterministic forecast, simulation and constrained planning primitives."""
 from __future__ import annotations
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from math import ceil
 from statistics import mean
 from typing import Iterable
@@ -64,23 +64,66 @@ class Batch: id:str; ingredient:str; quantity_kg:float; use_by_days:int; unit_co
 @dataclass
 class SimulationResult:
     expected_waste_kg:float; waste_probability:float; stockout_probability:float; cost_at_risk:float; p10_kg:float; p90_kg:float; seed:int; trials:int
+    ingredient_shortages: list[dict] = field(default_factory=list)
 
 def monte_carlo_risk(batches: Iterable[Batch], daily_demand: dict[str,float], horizon_days:int=7, trials:int=500, seed:int=42, demand_cv:float=.2)->SimulationResult:
-    """Expiry-safe FEFO demand simulation. All random draws are seeded and reproducible."""
-    batches=list(batches); rng=np.random.default_rng(seed); waste=[]; stockouts=[]; costs=[]
+    """Expiry-safe FEFO demand simulation with ingredient-level diagnostics."""
+    batches=list(batches); rng=np.random.default_rng(seed)
+    waste=[]; stockouts=[]; costs=[]
+    shortage_counts={ing:0 for ing in daily_demand}
+    unmet_totals={ing:0.0 for ing in daily_demand}
+
     for _ in range(trials):
-        available={b.id:b.quantity_kg for b in batches}; shortage=False
+        available={b.id:b.quantity_kg for b in batches}
+        shortage=False
+        ingredients_short=set()
+
         for day in range(horizon_days):
             for ing, base in daily_demand.items():
-                need=max(0,rng.normal(base, max(.01,base*demand_cv)))
-                choices=sorted((b for b in batches if b.ingredient.lower()==ing.lower() and b.use_by_days>day),key=lambda b:b.use_by_days)
+                need=max(0,rng.normal(base,max(.01,base*demand_cv)))
+                choices=sorted(
+                    (b for b in batches if b.ingredient.lower()==ing.lower() and b.use_by_days>day),
+                    key=lambda b:b.use_by_days
+                )
                 for b in choices:
-                    used=min(need,available[b.id]);available[b.id]-=used;need-=used
-                    if need<=0:break
-                shortage|=need>1e-8
+                    used=min(need,available[b.id])
+                    available[b.id]-=used
+                    need-=used
+                    if need<=0:
+                        break
+                if need>1e-8:
+                    shortage=True
+                    ingredients_short.add(ing)
+                    unmet_totals[ing]+=need
+
+        for ing in ingredients_short:
+            shortage_counts[ing]+=1
+
         at_risk=sum(available[b.id] for b in batches if b.use_by_days<=horizon_days)
-        waste.append(at_risk); costs.append(sum(available[b.id]*b.unit_cost for b in batches if b.use_by_days<=horizon_days)); stockouts.append(shortage)
-    a=np.array(waste);return SimulationResult(round(float(a.mean()),3),round(float(np.mean(a>0)),3),round(float(np.mean(stockouts)),3),round(float(np.mean(costs)),2),round(float(np.quantile(a,.1)),3),round(float(np.quantile(a,.9)),3),seed,trials)
+        waste.append(at_risk)
+        costs.append(sum(available[b.id]*b.unit_cost for b in batches if b.use_by_days<=horizon_days))
+        stockouts.append(shortage)
+
+    a=np.array(waste)
+    result=SimulationResult(
+        round(float(a.mean()),3),
+        round(float(np.mean(a>0)),3),
+        round(float(np.mean(stockouts)),3),
+        round(float(np.mean(costs)),2),
+        round(float(np.quantile(a,.1)),3),
+        round(float(np.quantile(a,.9)),3),
+        seed,trials
+    )
+    result.ingredient_shortages=[
+        {
+            "ingredient":ing,
+            "shortage_probability":round(shortage_counts[ing]/trials,3),
+            "expected_unmet_demand_kg":round(unmet_totals[ing]/trials,3)
+        }
+        for ing in daily_demand
+    ]
+    return result
+
 
 def optimize_purchase(available_kg:float, demand_kg:float, unit_cost:float, min_order_kg:float=0, max_order_kg:float=1000, shortage_penalty:float=20, waste_penalty:float=2)->dict:
     """Optional purchase plan; supplier minimum applies only when an order is made."""
